@@ -57,9 +57,16 @@ class Example:
         builder = wp.sim.ModelBuilder()
 
         self.num_links = len(articulation_builder.joint_type)
-        # use the last link as the end-effector
-        self.ee_link_index = self.num_links - 1
-        self.ee_link_offset = wp.vec3(0.0, 0.0, 1.0)
+        # Find the ee_gripper_link index by looking at joint connections
+        self.ee_link_index = -1
+        for i, joint in enumerate(articulation_builder.joint_name):
+            if joint == "ee_gripper":  # The fixed joint connecting link_6 to ee_gripper_link
+                self.ee_link_index = articulation_builder.joint_child[i]
+                break
+        if self.ee_link_index == -1:
+            raise ValueError("Could not find ee_gripper joint in URDF")
+            
+        self.ee_link_offset = wp.vec3(0.142, 0.0, 0.0)  # Offset from link_6 to ee_gripper_link
 
         self.dof = len(articulation_builder.joint_q)
 
@@ -68,11 +75,12 @@ class Example:
             builder.add_builder(
                 articulation_builder,
                 xform=wp.transform(
-                    wp.vec3(i * 2.0, 4.0, 0.0), wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), -math.pi * 0.5)
+                    wp.vec3(i * 0.2, 0.4, 0.05725),  # Base height from URDF
+                    wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), -math.pi * 0.5)
                 ),
             )
-            # target positions
-            self.target_origin.append((i * 2.0, 4.0, 0.0))
+            # target positions within arm's reach (0.769m)
+            self.target_origin.append((i * 0.2, 0.4, 0.05725))
             # joint initial positions (last 8 joints: 6 arm + 2 gripper)
             # Arm Joints:
             # Joint 0 (base): -3.054 to 3.054 rad (-175° to 175°)
