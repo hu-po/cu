@@ -5,6 +5,7 @@ cd warp
 uv venv && source .venv/bin/activate
 uv pip install warp-lang[extras]
 uv run python warp_cloth.py
+uv run python warp_ik.py
 ```
 
 use usd viewer to view the cloth sim

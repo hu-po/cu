@@ -19,7 +19,6 @@ import warp.examples
 import warp.sim
 import warp.sim.render
 
-
 @wp.kernel
 def compute_endeffector_position(
     body_q: wp.array(dtype=wp.transform),
@@ -202,6 +201,7 @@ if __name__ == "__main__":
 
     rng = np.random.default_rng(42)
 
+    print(f"USING GPU: {wp.get_device().is_cuda}")
     with wp.ScopedDevice(args.device):
         example = Example(stage_path=args.stage_path, num_envs=args.num_envs)
 
