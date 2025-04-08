@@ -43,7 +43,7 @@ class Example:
         self.render_time = 0.0
 
         # step size to use for the IK updates
-        self.step_size = 0.3
+        self.step_size = 1.0
 
         articulation_builder = wp.sim.ModelBuilder()
 
@@ -77,7 +77,7 @@ class Example:
         self.arm_spacing_xz = 1.0 # floor plane is x-z plane
         self.target_z_offset = 0.3 # 0.3m in front of the arm
         self.target_y_offset = 0.1 # 10cm above floor
-        self.num_rows = self.num_envs // 2
+        self.num_rows = int(math.sqrt(self.num_envs))
         for i in range(self.num_envs):
             x = (i % self.num_rows) * self.arm_spacing_xz
             z = (i // self.num_rows) * self.arm_spacing_xz
@@ -107,7 +107,7 @@ class Example:
             if from_home:
                 # Home position with small random variations
                 self.home_position = [0, np.pi/12, np.pi/12, 0, 0, 0, 0]
-                self.degree_offsets = [np.pi/12, np.pi/12, np.pi/12, np.pi/12, np.pi/12, np.pi/12, 0.01, 0.01]
+                self.degree_offsets = [np.pi/4, np.pi/8, np.pi/8, np.pi/8, np.pi/8, np.pi/8, 0.01, 0.01]
                 # arm
                 for i in range(6):
                     min_limit, max_limit = self.joint_limits['arm'][i]
@@ -244,12 +244,12 @@ if __name__ == "__main__":
         default="ik_trossen.usd",
         help="Path to the output USD file.",
     )
-    parser.add_argument("--train_iters", type=int, default=20, help="Total number of training iterations.")
-    parser.add_argument("--num_envs", type=int, default=10, help="Total number of simulated environments.")
+    parser.add_argument("--train_iters", type=int, default=36, help="Total number of training iterations.")
+    parser.add_argument("--num_envs", type=int, default=64, help="Total number of simulated environments.")
     parser.add_argument(
         "--num_rollouts",
         type=int,
-        default=5,
+        default=3,
         help="Total number of rollouts. In each rollout, a new set of target points is resampled for all environments.",
     )
     parser.add_argument(
@@ -285,8 +285,8 @@ if __name__ == "__main__":
         for _ in range(args.num_rollouts):
             # select new random target points for all envs
             example.targets = example.target_origin.copy()
-            # targets move in a 5cm square around the target origin
-            target_spawn_box_size = 0.05
+            # targets move in a 10cm square around the target origin
+            target_spawn_box_size = 0.1
             example.targets[:, :] += rng.uniform(-target_spawn_box_size/2, target_spawn_box_size/2, size=(example.num_envs, 3))
 
             for iter in range(args.train_iters):
