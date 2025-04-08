@@ -32,7 +32,7 @@ def compute_endeffector_position(
 
 
 class Example:
-    def __init__(self, stage_path="example_jacobian_ik.usd", num_envs=10, headless=False):
+    def __init__(self, stage_path="example_jacobian_ik.usd", num_envs=10, headless=False, from_home=False):
         rng = np.random.default_rng(42)
 
         self.num_envs = num_envs
@@ -43,7 +43,7 @@ class Example:
         self.render_time = 0.0
 
         # step size to use for the IK updates
-        self.step_size = 0.1
+        self.step_size = 0.3
 
         articulation_builder = wp.sim.ModelBuilder()
 
@@ -69,12 +69,15 @@ class Example:
         self.ee_link_offset = wp.vec3(0.0, 0.0, 0.0)  # Offset from link_6 to ee_gripper_link
         self.dof = len(articulation_builder.joint_q)
 
+        # targets will be visualized as spheres
+        self.target_origin = []
+        self.target_radius = 0.03
+
         # generate arm origins in a grid with 1m spacing
         self.arm_spacing_xz = 1.0 # floor plane is x-z plane
-        self.target_z_offset = 0.5725 # 0.5m in front of the arm
+        self.target_z_offset = 0.3 # 0.3m in front of the arm
         self.target_y_offset = 0.1 # 10cm above floor
         self.num_rows = self.num_envs // 2
-        self.target_origin = []
         for i in range(self.num_envs):
             x = (i % self.num_rows) * self.arm_spacing_xz
             z = (i // self.num_rows) * self.arm_spacing_xz
@@ -82,38 +85,56 @@ class Example:
                 articulation_builder,
                 xform=wp.transform(
                     wp.vec3(x, 0.0, z),
-                    wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), -math.pi * 0.5)
+                    wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), -math.pi * 0.5) * wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), -math.pi * 0.5)
                 ),
             )
             self.target_origin.append((x, self.target_y_offset, z + self.target_z_offset))
-            # joint initial positions (last 8 joints: 6 arm + 2 gripper)
-            # Arm Joints:
-            # Joint 0 (base): -3.054 to 3.054 rad (-175° to 175°)
-            # Joint 1 (shoulder): 0 to 3.14 rad (0° to 180°)
-            # Joint 2 (elbow): 0 to 2.356 rad (0° to 135°)
-            # Joint 3 (wrist 1): -1.57 to 1.57 rad (-90° to 90°)
-            # Joint 4 (wrist 2): -1.57 to 1.57 rad (-90° to 90°)
-            # Joint 5 (wrist 3): -3.14 to 3.14 rad (-180° to 180°)
-            # Gripper Joints:
-            # Right carriage: 0.0 to 0.044 m
-            # Left carriage: 0.0 to 0.044 m
+            self.joint_limits = {
+                'arm': [
+                    (-3.054, 3.054),    # base
+                    (0.0, 3.14),        # shoulder
+                    (0.0, 2.356),       # elbow
+                    (-1.57, 1.57),      # wrist 1
+                    (-1.57, 1.57),      # wrist 2
+                    (-3.14, 3.14)       # wrist 3
+                ],
+                'gripper': [
+                    (0.0, 0.044),       # right carriage
+                    (0.0, 0.044)        # left carriage
+                ]
+            }
+
+            if from_home:
+                # Home position with small random variations
+                self.home_position = [0, np.pi/12, np.pi/12, 0, 0, 0, 0]
+                self.degree_offsets = [np.pi/12, np.pi/12, np.pi/12, np.pi/12, np.pi/12, np.pi/12, 0.01, 0.01]
+                # arm
+                for i in range(6):
+                    min_limit, max_limit = self.joint_limits['arm'][i]
+                    value = self.home_position[i] + rng.uniform(-self.degree_offsets[i], self.degree_offsets[i])
+                    builder.joint_q[-8 + i] = np.clip(value, min_limit, max_limit)
+                # gripper
+                for i in range(2):
+                    min_limit, max_limit = self.joint_limits['gripper'][i]
+                    value = self.home_position[-2 + i] + rng.uniform(-self.degree_offsets[-2 + i], self.degree_offsets[-2 + i])
+                    builder.joint_q[-2 + i] = np.clip(value, min_limit, max_limit)
+
+            else:
+                # Full random initialization within joint limits
+                # arm
+                for i in range(6):
+                    min_limit, max_limit = self.joint_limits['arm'][i]
+                    builder.joint_q[-8 + i] = rng.uniform(min_limit, max_limit)
+                # gripper
+                for i in range(2):
+                    min_limit, max_limit = self.joint_limits['gripper'][i]
+                    builder.joint_q[-2 + i] = rng.uniform(min_limit, max_limit)
             
-            # Initialize arm joints
-            builder.joint_q[-8] = rng.uniform(-3.054, 3.054)  # Joint 0 (base)
-            builder.joint_q[-7] = rng.uniform(0.0, 3.14)      # Joint 1 (shoulder)
-            builder.joint_q[-6] = rng.uniform(0.0, 2.356)     # Joint 2 (elbow)
-            builder.joint_q[-5] = rng.uniform(-1.57, 1.57)    # Joint 3 (wrist 1)
-            builder.joint_q[-4] = rng.uniform(-1.57, 1.57)    # Joint 4 (wrist 2)
-            builder.joint_q[-3] = rng.uniform(-3.14, 3.14)    # Joint 5 (wrist 3)
-            
-            # Initialize gripper joints (both start closed)
-            builder.joint_q[-2] = 0.0  # Right carriage (closed)
-            builder.joint_q[-1] = 0.0  # Left carriage (closed)
         self.target_origin = np.array(self.target_origin)
 
         # finalize model
         self.model = builder.finalize()
-        self.model.ground = True
+        self.model.ground = False
 
         self.model.joint_q.requires_grad = True
         self.model.body_q.requires_grad = True
@@ -206,8 +227,8 @@ class Example:
 
         self.renderer.begin_frame(self.render_time)
         self.renderer.render(self.state)
-        self.renderer.render_points("targets", self.targets, radius=0.05)
-        self.renderer.render_points("ee_pos", self.ee_pos_np, radius=0.05)
+        self.renderer.render_points("targets", self.targets, radius=self.target_radius)
+        self.renderer.render_points("ee_pos", self.ee_pos_np, radius=self.target_radius)
         self.renderer.end_frame()
         self.render_time += self.frame_dt
 
@@ -223,7 +244,7 @@ if __name__ == "__main__":
         default="ik_trossen.usd",
         help="Path to the output USD file.",
     )
-    parser.add_argument("--train_iters", type=int, default=50, help="Total number of training iterations.")
+    parser.add_argument("--train_iters", type=int, default=20, help="Total number of training iterations.")
     parser.add_argument("--num_envs", type=int, default=10, help="Total number of simulated environments.")
     parser.add_argument(
         "--num_rollouts",
@@ -235,6 +256,11 @@ if __name__ == "__main__":
         "--headless",
         action="store_true",
         help="Run in headless mode, suppressing the opening of any graphical windows.",
+    )
+    parser.add_argument(
+        "--from_home",
+        action="store_true",
+        help="Initialize the arm to the home position instead of a random position.",
     )
 
     args = parser.parse_known_args()[0]
@@ -248,6 +274,7 @@ if __name__ == "__main__":
             headless=args.headless,
             num_envs=args.num_envs,
             stage_path=args.stage_path,
+            from_home=args.from_home,
         )
 
         print("autodiff:")
