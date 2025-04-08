@@ -200,6 +200,7 @@ if __name__ == "__main__":
     args = parser.parse_known_args()[0]
 
     rng = np.random.default_rng(42)
+    wp.init()
 
     print(f"USING GPU: {wp.get_device().is_cuda}")
     with wp.ScopedDevice(args.device):
