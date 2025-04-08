@@ -6,7 +6,7 @@ source .venv/bin/activate
 uv pip install cuda-core[cu12]
 
 references:
-https://nvidia.github.io/cccl/cuda_parallel/
+https://nvidia.github.io/cuda-python/cuda-core/latest/install.html#runtime-requirements
 https://github.com/NVIDIA/cuda-python
 
 """
