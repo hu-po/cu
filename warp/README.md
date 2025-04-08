@@ -4,6 +4,8 @@ install python dependencies and run cloth sim creation
 cd warp
 uv venv && source .venv/bin/activate
 uv pip install warp-lang[extras]
+# for arm agx orin cuda11
+uv pip install https://github.com/NVIDIA/warp/releases/download/v1.7.0/warp_lang-1.7.0+cu11-py3-none-manylinux2014_aarch64.whl
 uv run python warp_cloth.py
 uv run python warp_ik.py
 ```

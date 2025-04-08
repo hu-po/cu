@@ -196,6 +196,11 @@ if __name__ == "__main__":
         default=5,
         help="Total number of rollouts. In each rollout, a new set of target points is resampled for all environments.",
     )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run in headless mode, suppressing the opening of any graphical windows.",
+    )
 
     args = parser.parse_known_args()[0]
 
@@ -218,10 +223,11 @@ if __name__ == "__main__":
 
             for iter in range(args.train_iters):
                 example.step()
-                example.render()
+                if not args.headless:
+                    example.render()
                 print("iter:", iter, "error:", example.error.mean())
 
-        if example.renderer:
+        if not args.headless and example.renderer:
             example.renderer.save()
 
         avg_time = np.array(example.profiler["jacobian"]).mean()
