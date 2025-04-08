@@ -66,21 +66,26 @@ class Example:
         if self.ee_link_index == -1:
             raise ValueError("Could not find ee_gripper joint in URDF")
             
-        self.ee_link_offset = wp.vec3(0.142, 0.0, 0.0)  # Offset from link_6 to ee_gripper_link
-
+        self.ee_link_offset = wp.vec3(0.0, 0.0, 0.0)  # Offset from link_6 to ee_gripper_link
         self.dof = len(articulation_builder.joint_q)
 
+        # generate arm origins in a grid with 1m spacing
+        self.arm_spacing_xz = 1.0 # floor plane is x-z plane
+        self.target_z_offset = 0.5725 # 0.5m in front of the arm
+        self.target_y_offset = 0.1 # 10cm above floor
+        self.num_rows = self.num_envs // 2
         self.target_origin = []
         for i in range(self.num_envs):
+            x = (i % self.num_rows) * self.arm_spacing_xz
+            z = (i // self.num_rows) * self.arm_spacing_xz
             builder.add_builder(
                 articulation_builder,
                 xform=wp.transform(
-                    wp.vec3(i * 0.2, 0.4, 0.05725),  # Base height from URDF
+                    wp.vec3(x, 0.0, z),
                     wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), -math.pi * 0.5)
                 ),
             )
-            # target positions within arm's reach (0.769m)
-            self.target_origin.append((i * 0.2, 0.4, 0.05725))
+            self.target_origin.append((x, self.target_y_offset, z + self.target_z_offset))
             # joint initial positions (last 8 joints: 6 arm + 2 gripper)
             # Arm Joints:
             # Joint 0 (base): -3.054 to 3.054 rad (-175° to 175°)
@@ -253,7 +258,9 @@ if __name__ == "__main__":
         for _ in range(args.num_rollouts):
             # select new random target points for all envs
             example.targets = example.target_origin.copy()
-            example.targets[:, 1:] += rng.uniform(-0.05, 0.05, size=(example.num_envs, 2))
+            # targets move in a 5cm square around the target origin
+            target_spawn_box_size = 0.05
+            example.targets[:, :] += rng.uniform(-target_spawn_box_size/2, target_spawn_box_size/2, size=(example.num_envs, 3))
 
             for iter in range(args.train_iters):
                 example.step()
