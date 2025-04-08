@@ -36,4 +36,4 @@ Makefile
 # Temporary files
 *.log
 *.tmp
-*.bak
+*.bak 
