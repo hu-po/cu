@@ -32,7 +32,7 @@ def compute_endeffector_position(
 
 
 class Example:
-    def __init__(self, stage_path="example_jacobian_ik.usd", num_envs=10):
+    def __init__(self, stage_path="example_jacobian_ik.usd", num_envs=10, headless=False):
         rng = np.random.default_rng(42)
 
         self.num_envs = num_envs
@@ -88,7 +88,7 @@ class Example:
 
         self.integrator = wp.sim.SemiImplicitIntegrator()
 
-        if stage_path:
+        if not headless and stage_path:
             self.renderer = wp.sim.render.SimRenderer(self.model, stage_path)
         else:
             self.renderer = None
@@ -209,7 +209,11 @@ if __name__ == "__main__":
 
     print(f"USING GPU: {wp.get_device().is_cuda}")
     with wp.ScopedDevice(args.device):
-        example = Example(stage_path=args.stage_path, num_envs=args.num_envs)
+        example = Example(
+            stage_path=args.stage_path,
+            num_envs=args.num_envs,
+            headless=args.headless,
+        )
 
         print("autodiff:")
         print(example.compute_jacobian())
@@ -223,11 +227,10 @@ if __name__ == "__main__":
 
             for iter in range(args.train_iters):
                 example.step()
-                if not args.headless:
-                    example.render()
+                example.render()
                 print("iter:", iter, "error:", example.error.mean())
 
-        if not args.headless and example.renderer:
+        if example.renderer is not None:
             example.renderer.save()
 
         avg_time = np.array(example.profiler["jacobian"]).mean()
