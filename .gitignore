@@ -37,3 +37,12 @@ Makefile
 *.log
 *.tmp
 *.bak
+
+# USD files
+*.usd
+*.usda
+*.usdc
+*.usdz
+*.usd.gz
+*.usd.zip
+*.usd.bz2
