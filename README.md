@@ -9,18 +9,8 @@ nvidia-smi
 nvcc --version
 ```
 
-compile examples
+### Index
 
-```bash
-mkdir build
-cd build
-cmake ..
-make
-```
-
-run examples
-
-```bash
-./bin/allreduce
-```
+- `allreduce` - tried to get gpt, grok, and gemini to make their own versions
+- `warp` - IK using warp on different hardware
 
