@@ -210,9 +210,9 @@ if __name__ == "__main__":
     print(f"USING GPU: {wp.get_device().is_cuda}")
     with wp.ScopedDevice(args.device):
         example = Example(
-            stage_path=args.stage_path,
-            num_envs=args.num_envs,
             headless=args.headless,
+            num_envs=args.num_envs,
+            stage_path=args.stage_path,
         )
 
         print("autodiff:")
