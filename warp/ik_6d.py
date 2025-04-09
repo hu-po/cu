@@ -17,10 +17,10 @@ log.setLevel(logging.INFO)
 @wp.kernel
 def forward_kinematics(
     body_q: wp.array(dtype=wp.transform),
-    ee_pose: wp.array(dtype=wp.transform),
     num_links: int,
     ee_link_index: int,
     ee_link_tf_offset: wp.transform,
+    ee_pose: wp.array(dtype=wp.transform),
 ):
     tid = wp.tid()
     ee_pose[tid] = wp.transform_multiply(body_q[tid * num_links + ee_link_index], ee_link_tf_offset)
@@ -28,21 +28,17 @@ def forward_kinematics(
 @wp.kernel
 def compute_ik_loss(
     ee_pose: wp.array(dtype=wp.transform),
-    target_pose: wp.array(dtype=wp.transform),
+    target_pos: wp.array(dtype=wp.vec3),
+    target_quat: wp.array(dtype=wp.quat),
     kp_pos: float,
     kp_rot: float,
     loss: wp.array(dtype=float),
 ):
     tid = wp.tid()
-
-    # position error
-    pos_err = wp.transform_get_translation(target_pose[tid]) - wp.transform_get_translation(ee_pose[tid])
+    pos_err = target_pos[tid] - wp.transform_get_translation(ee_pose[tid])
     loss_pos = wp.dot(pos_err, pos_err)
-
-    # rotation error (axis-angle representation)
-    rot_err = wp.quat_error(wp.transform_get_rotation(ee_pose[tid]), wp.transform_get_rotation(target_pose[tid]))
+    rot_err = wp.quat_error(wp.transform_get_rotation(ee_pose[tid]), target_quat[tid])
     loss_rot = wp.dot(rot_err, rot_err)
-
     loss[tid] = kp_pos * loss_pos + kp_rot * loss_rot
 
 @dataclass
@@ -57,7 +53,7 @@ class SimConfig:
     start_time: float = 0.0 # start time for the simulation
     fps: int = 60 # frames per second
     urdf_path: str = "~/dev/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf" # path to the urdf file
-    usd_output_path: str = "~/dev/cu/warp/ik_output_grok.usd" # path to the usd file to save the model
+    usd_output_path: str = "~/dev/cu/warp/ik_output.usd" # path to the usd file to save the model
     ee_link_offset: tuple[float, float, float] = (0.0, 0.0, 0.0) # offset from the ee_gripper_link to the end effector
     kp_pos: float = 100.0 # gain for position error
     kp_rot: float = 1.0 # gain for rotation error
@@ -135,8 +131,8 @@ class Sim:
                 _initial_arm_orientation *= wp.quat_from_axis_angle(wp.vec3(axis), angle)
         self.initial_arm_orientation = _initial_arm_orientation
         # targets are 6D poses visualized with cone gizmos
-        initial_target_poses_np = np.empty(self.num_envs, dtype=wp.transform)
-
+        initial_target_pos_np = np.empty((self.num_envs, 3), dtype=np.float32)
+        initial_target_quat_np = np.empty((self.num_envs, 4), dtype=np.float32)
         # parallel arms are spawned in a grid on the floor (x-z plane)
         self.arm_spacing_xz = config.arm_spacing_xz
         self.arm_height_offset = config.arm_height_offset
@@ -154,8 +150,8 @@ class Sim:
                                 self.arm_height_offset + config.target_pos_offset[1],
                                 z + config.target_pos_offset[2])
             target_rot = self.initial_arm_orientation # Start with same orientation as arm base
-            initial_target_poses_np[e] = wp.transform(target_pos, target_rot)
-
+            initial_target_pos_np[e] = target_pos
+            initial_target_quat_np[e] = target_rot
             num_joints_in_arm = len(config.qpos_home)
             for i in range(num_joints_in_arm):
                 value = config.qpos_home[i] + self.rng.uniform(-config.q_angle_shuffle[i], config.q_angle_shuffle[i])
@@ -175,9 +171,11 @@ class Sim:
             self.renderer = None
         # simulation state
         self.ee_pose = wp.zeros(self.num_envs, dtype=wp.transform, requires_grad=True, device=self.device)
+        self.initial_target_pos = wp.array(initial_target_pos_np, dtype=wp.vec3, device=self.device)
+        self.initial_target_quat = wp.array(initial_target_quat_np, dtype=wp.quat, device=self.device)
+        self.target_pos = wp.array(initial_target_pos_np, dtype=wp.vec3, requires_grad=False, device=self.device)
+        self.target_quat = wp.array(initial_target_quat_np, dtype=wp.quat, requires_grad=False, device=self.device)
         self.state = self.model.state(requires_grad=True)
-        self.initial_target_poses = wp.array(initial_target_poses_np, dtype=wp.transform, device=self.device)
-        self.target_poses = wp.array(initial_target_poses_np, dtype=wp.transform, requires_grad=False, device=self.device)
         self.ik_loss = wp.zeros(self.num_envs, dtype=float, device=self.device)
         self.profiler = {}
         self.tape = None
@@ -190,7 +188,7 @@ class Sim:
         wp.launch(
             forward_kinematics,
             dim=self.num_envs,
-            inputs=[self.state.body_q, self.ee_pose, self.num_links, self.ee_link_index, self.ee_link_tf_offset],
+            inputs=[self.state.body_q, self.num_links, self.ee_link_index, self.ee_link_tf_offset],
             outputs=[self.ee_pose],
             device=self.device,
         )
@@ -204,7 +202,7 @@ class Sim:
             wp.launch(
                 compute_ik_loss,
                 dim=self.num_envs,
-                inputs=[self.ee_pose, self.target_poses, self.config.kp_pos, self.config.kp_rot],
+                inputs=[self.ee_pose, self.target_pos, self.target_quat, self.config.kp_pos, self.config.kp_rot],
                 outputs=[self.ik_loss],
                 device=self.device
             )
@@ -240,19 +238,20 @@ class Sim:
 
         # Get poses as numpy for iteration (ensure they are computed if needed)
         ee_poses_np = self.ee_pose.numpy()
-        target_poses_np = self.target_poses.numpy()
+        target_pos_np = self.target_pos.numpy()
+        target_quat_np = self.target_quat.numpy()
 
         # Calculate error norms for logging (outside render loop ideally, but ok here for now)
-        pos_errors = target_poses_np['p'] - ee_poses_np['p']
+        ee_pos_np = ee_poses_np['p'] # Access position component
+        ee_quat_np = ee_poses_np['q'] # Access rotation component
+        pos_errors = target_pos_np - ee_pos_np
         self.pos_error_norm = np.linalg.norm(pos_errors, axis=1).mean()
-        # Rough rotation error visualization (magnitude of axis-angle error)
-        rot_errors = [wp.quat_error(wp.quat(ee_poses_np[i]['q']), wp.quat(target_poses_np[i]['q'])) for i in range(self.num_envs)]
-        self.rot_error_norm = np.linalg.norm(rot_errors, axis=1).mean()
+        # Note: Computing rotation error norm accurately here requires care with quaternion math in numpy or converting back to wp.quat
 
         for i in range(self.num_envs):
             # Extract individual pose components
-            target_pos_tuple = tuple(target_poses_np[i]['p']) # render_cone needs tuple position
-            target_rot_wp = wp.quat(target_poses_np[i]['q']) # Use wp.quat for multiplication
+            target_pos_tuple = tuple(target_pos_np[i]) # render_cone needs tuple position
+            target_rot_wp = wp.quat(target_quat_np[i]) # Use wp.quat for multiplication
             ee_pos_tuple = tuple(ee_poses_np[i]['p']) # render_cone needs tuple position
             ee_rot_wp = wp.quat(ee_poses_np[i]['q'])      # Use wp.quat for multiplication
 
@@ -288,22 +287,21 @@ def run_sim(config: SimConfig):
     log.info(f"gpu enabled: {wp.get_device().is_cuda}")
     log.info("starting simulation")
     with wp.ScopedDevice(config.device):
-        sim = Sim(config) # sim.device is now set
-
-        # Pre-compute ee pose once before rollouts if needed for debugging/initial state check
-        # sim.compute_ee_pose()
+        sim = Sim(config)
 
         for i in range(config.num_rollouts):
             # select new random target points for all envs
-            current_targets_np = sim.initial_target_poses.numpy().copy()
+            current_target_pos_np = sim.initial_target_pos.numpy().copy()
+            current_target_quat_np = sim.initial_target_quat.numpy().copy()
+
             # Add random translation
             translation_noise = sim.rng.uniform(
                 -config.target_spawn_box_size/2,
                 config.target_spawn_box_size/2,
                 size=(sim.num_envs, 3),
             )
-            current_targets_np['p'] += translation_noise
-
+            current_target_pos_np += translation_noise
+            
             # Add random rotation (small angle)
             angle_noise = sim.rng.uniform(-np.pi/8, np.pi/8, size=sim.num_envs)
             axis_noise = sim.rng.normal(size=(sim.num_envs, 3))
@@ -311,12 +309,14 @@ def run_sim(config: SimConfig):
 
             for e in range(sim.num_envs):
                  # Convert axis-angle noise to quaternion and apply
-                 noise_quat_np = wp.quat_from_axis_angle(wp.vec3(axis_noise[e]), angle_noise[e]).numpy()
-                 current_quat_np = current_targets_np[e]['q']
+                 noise_quat = wp.quat_from_axis_angle(wp.vec3(axis_noise[e]), float(angle_noise[e]))
+                 current_quat = wp.quat(current_target_quat_np[e])
                  # Multiply quaternions: new_rot = noise_rot * current_rot
-                 current_targets_np[e]['q'] = wp.mul(wp.quat(noise_quat_np), wp.quat(current_quat_np)).numpy()
+                 new_quat = wp.mul(noise_quat, current_quat)
+                 current_target_quat_np[e] = np.array([new_quat[0], new_quat[1], new_quat[2], new_quat[3]])
 
-            sim.target_poses.assign(current_targets_np)
+            sim.target_pos.assign(current_target_pos_np)
+            sim.target_quat.assign(current_target_quat_np)
 
             for j in range(config.train_iters):
                  sim.step()
@@ -324,11 +324,12 @@ def run_sim(config: SimConfig):
                  log.info(f"Rollout {i}, Iter: {j}, Pos Error: {sim.pos_error_norm:.4f}, Rot Error: {sim.rot_error_norm:.4f}")
         if not config.headless and sim.renderer is not None:
             sim.renderer.save()
-        avg_time = np.array(sim.profiler["ik_update"]).mean()
-        avg_steps_second = 1000.0 * float(sim.num_envs) / avg_time if avg_time > 0 else 0
+        if "ik_update" in sim.profiler and len(sim.profiler["ik_update"]) > 0:
+            avg_time = np.array(sim.profiler["ik_update"]).mean()
+            avg_steps_second = 1000.0 * float(sim.num_envs) / avg_time if avg_time > 0 else 0
+            log.info(f"step time: {avg_time:.3f} ms, {avg_steps_second:.2f} steps/s")
     log.info(f"simulation complete!")
     log.info(f"performed {config.num_rollouts * config.train_iters} steps")
-    log.info(f"step time: {avg_time:.3f} ms, {avg_steps_second:.2f} steps/s")
 
 if __name__ == "__main__":
     import argparse
