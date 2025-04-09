@@ -44,7 +44,8 @@ class SimConfig:
     arm_spacing_xz: float = 1.0 # spacing between arms in the x-z plane
     arm_height: float = 0.0 # height of the arm off the floor
     target_offset: tuple[float, float, float] = (0.3, 0, 0.1) # offset of the target from the base (in robot coordinates)
-    target_spawn_box_size: float = 0.1 # size of the box to spawn the target in
+    target_spawn_pos_noise: float = 0.1 # maximum position noise to add when spawning targets
+    target_spawn_rot_noise: float = np.pi/8  # maximum rotation angle noise to add when spawning targets
     joint_limits: list[tuple[float, float]] = field(default_factory=lambda: [
         (-3.054, 3.054),    # base
         (0.0, 3.14),        # shoulder
@@ -77,6 +78,8 @@ def quat_to_rot_matrix_np(q):
         [2 * (x * z - y * w),           2 * (y * z + x * w),         1 - 2 * (x ** 2 + y ** 2)]
     ], dtype=np.float32)
 
+def quat_from_axis_angle_np(axis, angle):
+    return np.concatenate([axis * np.sin(angle / 2), [np.cos(angle / 2)]])
 
 # Helper: apply a transformation to a point.
 def apply_transform_np(translation, quat, point):
@@ -475,10 +478,18 @@ def run_sim(config: SimConfig):
         for i in range(config.num_rollouts):
             sim.targets = sim.target_origin.copy()
             sim.targets[:, :] += sim.rng.uniform(
-                -config.target_spawn_box_size / 2,
-                config.target_spawn_box_size / 2,
+                -config.target_spawn_pos_noise / 2,
+                config.target_spawn_pos_noise / 2,
                 size=(sim.num_envs, 3)
             )
+            random_axes = sim.rng.uniform(-1, 1, size=(sim.num_envs, 3))
+            random_angles = sim.rng.uniform(-config.target_spawn_rot_noise, 
+                                          config.target_spawn_rot_noise, 
+                                          size=(sim.num_envs,))
+            target_orientations = np.empty((sim.num_envs, 4), dtype=np.float32)
+            for e in range(sim.num_envs):
+                target_orientations[e] = quat_from_axis_angle_np(random_axes[e], random_angles[e])
+            sim.target_ori = target_orientations
             for j in range(config.train_iters):
                 sim.step()
                 sim.render()
