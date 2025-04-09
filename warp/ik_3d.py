@@ -11,6 +11,11 @@ import warp.examples
 import warp.sim
 import warp.sim.render
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 
@@ -75,7 +80,7 @@ class SimConfig:
 
 class Sim:
     def __init__(self, config: SimConfig):
-        log.info(f"Initializing Sim with config: {config}")
+        log.debug(f"config: {config}")
         self.config = config
         self.rng = np.random.default_rng(config.seed)
         self.num_envs = config.num_envs
@@ -282,7 +287,7 @@ def run_sim(config: SimConfig):
             for j in range(config.train_iters):
                 sim.step()
                 sim.render()
-                log.info(f"rollout {i}, iter: {j}, error: {sim.error.mean()}")
+                log.debug(f"rollout {i}, iter: {j}, error: {sim.error.mean()}")
         if not config.headless and sim.renderer is not None:
             sim.renderer.save()
         avg_time = np.array(sim.profiler["jacobian"]).mean()

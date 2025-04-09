@@ -35,10 +35,34 @@ def compute_ik_loss(
     loss: wp.array(dtype=float),
 ):
     tid = wp.tid()
-    pos_err = target_pos[tid] - wp.transform_get_translation(ee_pose[tid])
+
+    # --- Position Error ---
+    current_pos = wp.transform_get_translation(ee_pose[tid])
+    pos_err = target_pos[tid] - current_pos
     loss_pos = wp.dot(pos_err, pos_err)
-    rot_err = wp.quat_error(wp.transform_get_rotation(ee_pose[tid]), target_quat[tid])
+
+    # --- Rotation Error (Manual Calculation) ---
+    current_quat = wp.transform_get_rotation(ee_pose[tid])
+    target_q = target_quat[tid]
+
+    # Calculate the difference quaternion: delta_q = target_q * inverse(current_quat)
+    q_inv = wp.quat_inverse(current_quat)
+    delta_q = wp.mul(target_q, q_inv)
+
+    # Ensure w is positive (shortest path rotation)
+    # If w is negative, the rotation is > 180 degrees,
+    # negate the quaternion to get the equivalent rotation < 180 degrees.
+    if delta_q.w < 0.0:
+        # delta_q = -delta_q # This would negate w too, keep w positive convention
+        delta_q = wp.quat(-delta_q.x, -delta_q.y, -delta_q.z, -delta_q.w)
+
+
+    # The error vector is 2.0 * vector part of the delta quaternion
+    # This approximates the axis-angle rotation vector.
+    rot_err = 2.0 * wp.vec3(delta_q.x, delta_q.y, delta_q.z)
     loss_rot = wp.dot(rot_err, rot_err)
+
+    # --- Combined Loss ---
     loss[tid] = kp_pos * loss_pos + kp_rot * loss_rot
 
 @dataclass
