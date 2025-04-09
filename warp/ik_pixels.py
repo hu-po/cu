@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 import os
 import logging
@@ -27,39 +27,51 @@ def forward_kinematics(
 
 @dataclass
 class SimConfig:
-    device: str # device to run the simulation on
-    seed: int # random seed
-    headless: bool # turns off rendering
-    num_envs: int # number of parallel environments
-    num_rollouts: int # number of rollouts to perform
-    train_iters: int # number of training iterations per rollout
-    start_time: float # start time for the simulation
-    fps: int # frames per second
-    step_size: float # step size in q space for updates
-    urdf_path: str # path to the urdf file
-    usd_output_path: str # path to the usd file to save the model
-    ee_link_offset: tuple[float, float, float] # offset from the ee_gripper_link to the end effector
-    gizmo_radius: float # radius of the gizmo (used for arrow base radius)
-    gizmo_length: float # total length of the gizmo arrow
-    gizmo_color_x_ee: tuple[float, float, float] # color of the x gizmo for the ee
-    gizmo_color_y_ee: tuple[float, float, float] # color of the y gizmo for the ee
-    gizmo_color_z_ee: tuple[float, float, float] # color of the z gizmo for the ee
-    gizmo_color_x_target: tuple[float, float, float] # color of the x gizmo for the target
-    gizmo_color_y_target: tuple[float, float, float] # color of the y gizmo for the target
-    gizmo_color_z_target: tuple[float, float, float] # color of the z gizmo for the target
-    arm_spacing_xz: float # spacing between arms in the x-z plane
-    arm_height: float # height of the arm off the floor
-    target_z_offset: float # offset of the target in the z direction
-    target_y_offset: float # offset of the target in the y direction
-    target_spawn_box_size: float # size of the box to spawn the target in
-    joint_limits: list[tuple[float, float]] # joint limits for arm
-    arm_rot_offset: list[tuple[tuple[float, float, float], float]] # list of axis angle rotations for initial arm orientation offset
-    qpos_home: list[float] # home position for the arm
-    q_angle_shuffle: list[float] # amount of random noise to add to the arm joint angles
-    joint_q_requires_grad: bool # whether to require grad for the joint q
-    body_q_requires_grad: bool # whether to require grad for the body q
-    joint_attach_ke: float # stiffness for the joint attach
-    joint_attach_kd: float # damping for the joint attach
+    device: str = None # device to run the simulation on
+    seed: int = 42 # random seed
+    headless: bool = False # turns off rendering
+    num_envs: int = 16 # number of parallel environments
+    num_rollouts: int = 2 # number of rollouts to perform
+    train_iters: int = 16 # number of training iterations per rollout
+    start_time: float = 0.0 # start time for the simulation
+    fps: int = 60 # frames per second
+    step_size: float = 1.0 # step size in q space for updates
+    urdf_path: str = "~/dev/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf" # path to the urdf file
+    usd_output_path: str = "ik_trossen.usd" # path to the usd file to save the model
+    ee_link_offset: tuple[float, float, float] = (0.0, 0.0, 0.0) # offset from the ee_gripper_link to the end effector
+    gizmo_radius: float = 0.005 # radius of the gizmo (used for arrow base radius)
+    gizmo_length: float = 0.05 # total length of the gizmo arrow
+    gizmo_color_x_ee: tuple[float, float, float] = (1.0, 0.0, 0.0) # color of the x gizmo for the ee
+    gizmo_color_y_ee: tuple[float, float, float] = (0.0, 1.0, 0.0) # color of the y gizmo for the ee
+    gizmo_color_z_ee: tuple[float, float, float] = (0.0, 0.0, 1.0) # color of the z gizmo for the ee
+    gizmo_color_x_target: tuple[float, float, float] = (1.0, 0.5, 0.5) # color of the x gizmo for the target
+    gizmo_color_y_target: tuple[float, float, float] = (0.5, 1.0, 0.5) # color of the y gizmo for the target
+    gizmo_color_z_target: tuple[float, float, float] = (0.5, 0.5, 1.0) # color of the z gizmo for the target
+    arm_spacing_xz: float = 1.0 # spacing between arms in the x-z plane
+    arm_height: float = 0.0 # height of the arm off the floor
+    target_z_offset: float = 0.3 # offset of the target in the z direction
+    target_y_offset: float = 0.1 # offset of the target in the y direction
+    target_spawn_box_size: float = 0.1 # size of the box to spawn the target in
+    joint_limits: list[tuple[float, float]] = field(default_factory=lambda: [
+        (-3.054, 3.054),    # base
+        (0.0, 3.14),        # shoulder
+        (0.0, 2.356),       # elbow
+        (-1.57, 1.57),      # wrist 1
+        (-1.57, 1.57),      # wrist 2
+        (-3.14, 3.14),      # wrist 3
+        (0.0, 0.044),       # right finger
+        (0.0, 0.044),       # left finger
+    ]) # joint limits for arm
+    arm_rot_offset: list[tuple[tuple[float, float, float], float]] = field(default_factory=lambda: [
+        ((1.0, 0.0, 0.0), -math.pi * 0.5), # quarter turn about x-axis
+        ((0.0, 0.0, 1.0), -math.pi * 0.5), # quarter turn about z-axis
+    ]) # list of axis angle rotations for initial arm orientation offset
+    qpos_home: list[float] = field(default_factory=lambda: [0, np.pi/12, np.pi/12, 0, 0, 0, 0, 0]) # home position for the arm
+    q_angle_shuffle: list[float] = field(default_factory=lambda: [np.pi/4, np.pi/8, np.pi/8, np.pi/8, np.pi/8, np.pi/8, 0.01, 0.01]) # amount of random noise to add to the arm joint angles
+    joint_q_requires_grad: bool = True # whether to require grad for the joint q
+    body_q_requires_grad: bool = True # whether to require grad for the body q
+    joint_attach_ke: float = 1600.0 # stiffness for the joint attach
+    joint_attach_kd: float = 20.0 # damping for the joint attach
 
 class Sim:
     def __init__(self, config: SimConfig):
@@ -296,44 +308,5 @@ if __name__ == "__main__":
         num_envs=args.num_envs,
         num_rollouts=args.num_rollouts,
         train_iters=args.train_iters,
-        start_time=0.0,
-        fps=60,
-        step_size=1.0,
-        urdf_path="~/dev/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf",
-        usd_output_path="ik_trossen.usd",
-        ee_link_offset=(0.0, 0.0, 0.0),
-        gizmo_radius=0.005, # radius of cone
-        gizmo_length=0.05, # half-length of cone
-        gizmo_color_x_ee=(1.0, 0.0, 0.0), # red
-        gizmo_color_x_target=(1.0, 0.5, 0.5), # light red
-        gizmo_color_y_ee=(0.0, 1.0, 0.0), # green
-        gizmo_color_y_target=(0.5, 1.0, 0.5), # light green
-        gizmo_color_z_ee=(0.0, 0.0, 1.0), # blue
-        gizmo_color_z_target=(0.5, 0.5, 1.0), # light blue
-        arm_spacing_xz=1.0,
-        arm_height=0.0,
-        target_z_offset=0.3,
-        target_y_offset=0.1,
-        target_spawn_box_size=0.1,
-        joint_limits=[
-                (-3.054, 3.054),    # base
-                (0.0, 3.14),        # shoulder
-                (0.0, 2.356),       # elbow
-                (-1.57, 1.57),      # wrist 1
-                (-1.57, 1.57),      # wrist 2
-                (-3.14, 3.14),       # wrist 3
-                (0.0, 0.044),   # right finger
-                (0.0, 0.044),    # left finger
-        ],
-        arm_rot_offset=[
-            ((1.0, 0.0, 0.0), -math.pi * 0.5), # quarter turn about x-axis
-            ((0.0, 0.0, 1.0), -math.pi * 0.5), # quarter turn about z-axis
-        ],
-        qpos_home=[0, np.pi/12, np.pi/12, 0, 0, 0, 0, 0],
-        q_angle_shuffle=[np.pi/4, np.pi/8, np.pi/8, np.pi/8, np.pi/8, np.pi/8, 0.01, 0.01],
-        joint_q_requires_grad=True,
-        body_q_requires_grad=True,
-        joint_attach_ke=1600.0,
-        joint_attach_kd=20.0,
     )
     run_sim(config)
