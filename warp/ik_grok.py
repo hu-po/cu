@@ -57,7 +57,7 @@ class SimConfig:
     start_time: float = 0.0 # start time for the simulation
     fps: int = 60 # frames per second
     urdf_path: str = "~/dev/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf" # path to the urdf file
-    usd_output_path: str = "~/dev/cu/warp/ik_output.usd" # path to the usd file to save the model
+    usd_output_path: str = "~/dev/cu/warp/ik_output_grok.usd" # path to the usd file to save the model
     ee_link_offset: tuple[float, float, float] = (0.0, 0.0, 0.0) # offset from the ee_gripper_link to the end effector
     kp_pos: float = 100.0 # gain for position error
     kp_rot: float = 1.0 # gain for rotation error
