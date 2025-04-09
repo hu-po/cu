@@ -26,7 +26,7 @@ class SimConfig:
     headless: bool = False # turns off rendering
     num_envs: int = 16 # number of parallel environments
     num_rollouts: int = 2 # number of rollouts to perform
-    train_iters: int = 32 # number of training iterations per rollout
+    train_iters: int = 64 # number of training iterations per rollout
     start_time: float = 0.0 # start time for the simulation
     fps: int = 60 # frames per second
     step_size: float = 1.0 # step size in q space for updates
@@ -322,9 +322,9 @@ class Sim:
             jacobians = self.compute_geometric_jacobian()
         ee_error_flat = self.compute_ee_error().numpy()
         error = ee_error_flat.reshape(self.num_envs, 6, 1)
-        delta_q = np.matmul(jacobians.transpose(0, 2, 1), error)
+        delta_q = -self.step_size * np.matmul(jacobians.transpose(0, 2, 1), error)
         self.model.joint_q = wp.array(
-            self.model.joint_q.numpy() + self.step_size * delta_q.flatten(),
+            self.model.joint_q.numpy() + delta_q.flatten(),
             dtype=wp.float32,
             requires_grad=True,
         )
@@ -500,7 +500,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_envs", type=int, default=16, help="Number of environments to simulate.")
     parser.add_argument("--headless", action='store_true', help="Run in headless mode.")
     parser.add_argument("--num_rollouts", type=int, default=2, help="Number of rollouts to perform.")
-    parser.add_argument("--train_iters", type=int, default=32, help="Training iterations per rollout.")
+    parser.add_argument("--train_iters", type=int, default=64, help="Training iterations per rollout.")
     args = parser.parse_known_args()[0]
     config = SimConfig(
         device=args.device,
