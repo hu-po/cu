@@ -21,51 +21,50 @@ log.setLevel(logging.INFO)
 
 @dataclass
 class SimConfig:
-    device: str = None                   # Device to run the simulation.
-    seed: int = 42                        # Random seed.
-    headless: bool = False                # Turns off rendering.
-    num_envs: int = 16                    # Number of parallel environments.
-    num_rollouts: int = 2                 # Number of rollouts to perform.
-    train_iters: int = 32                 # Training iterations per rollout.
-    start_time: float = 0.0               # Start time.
-    fps: int = 60                         # Frames per second.
-    step_size: float = 1.0                # Step size in joint space.
-    urdf_path: str = "~/dev/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf"
-    usd_output_path: str = "~/dev/cu/warp/ik_output_6d_gpt.usd"
-    ee_link_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    gizmo_radius: float = 0.005
-    gizmo_length: float = 0.05
-    gizmo_color_x_ee: tuple[float, float, float] = (1.0, 0.0, 0.0)
-    gizmo_color_y_ee: tuple[float, float, float] = (0.0, 1.0, 0.0)
-    gizmo_color_z_ee: tuple[float, float, float] = (0.0, 0.0, 1.0)
-    gizmo_color_x_target: tuple[float, float, float] = (1.0, 0.5, 0.5)
-    gizmo_color_y_target: tuple[float, float, float] = (0.5, 1.0, 0.5)
-    gizmo_color_z_target: tuple[float, float, float] = (0.5, 0.5, 1.0)
-    arm_spacing_xz: float = 1.0
-    arm_height: float = 0.0
-    target_z_offset: float = 0.3          # In local coordinates, forward offset (here we use negative X for "forward").
-    target_y_offset: float = 0.1          # Vertical offset.
-    target_spawn_box_size: float = 0.1
+    device: str = None # device to run the simulation on
+    seed: int = 42 # random seed
+    headless: bool = False # turns off rendering
+    num_envs: int = 16 # number of parallel environments
+    num_rollouts: int = 2 # number of rollouts to perform
+    train_iters: int = 32 # number of training iterations per rollout
+    start_time: float = 0.0 # start time for the simulation
+    fps: int = 60 # frames per second
+    step_size: float = 1.0 # step size in q space for updates
+    urdf_path: str = "~/dev/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf" # path to the urdf file
+    usd_output_path: str = "~/dev/cu/warp/ik_output_6d_gpt.usd" # path to the usd file to save the model
+    ee_link_offset: tuple[float, float, float] = (0.0, 0.0, 0.0) # offset from the ee_gripper_link to the end effector
+    gizmo_radius: float = 0.005 # radius of the gizmo (used for arrow base radius)
+    gizmo_length: float = 0.05 # total length of the gizmo arrow
+    gizmo_color_x_ee: tuple[float, float, float] = (1.0, 0.0, 0.0) # color of the x gizmo for the ee
+    gizmo_color_y_ee: tuple[float, float, float] = (0.0, 1.0, 0.0) # color of the y gizmo for the ee
+    gizmo_color_z_ee: tuple[float, float, float] = (0.0, 0.0, 1.0) # color of the z gizmo for the ee
+    gizmo_color_x_target: tuple[float, float, float] = (1.0, 0.5, 0.5) # color of the x gizmo for the target
+    gizmo_color_y_target: tuple[float, float, float] = (0.5, 1.0, 0.5) # color of the y gizmo for the target
+    gizmo_color_z_target: tuple[float, float, float] = (0.5, 0.5, 1.0) # color of the z gizmo for the target
+    arm_spacing_xz: float = 1.0 # spacing between arms in the x-z plane
+    arm_height: float = 0.0 # height of the arm off the floor
+    target_offset: tuple[float, float, float] = (0.3, 0, 0.1) # offset of the target from the base (in robot coordinates)
+    target_spawn_box_size: float = 0.1 # size of the box to spawn the target in
     joint_limits: list[tuple[float, float]] = field(default_factory=lambda: [
-        (-3.054, 3.054),
-        (0.0, 3.14),
-        (0.0, 2.356),
-        (-1.57, 1.57),
-        (-1.57, 1.57),
-        (-3.14, 3.14),
-        (0.0, 0.044),
-        (0.0, 0.044),
-    ])
+        (-3.054, 3.054),    # base
+        (0.0, 3.14),        # shoulder
+        (0.0, 2.356),       # elbow
+        (-1.57, 1.57),      # wrist 1
+        (-1.57, 1.57),      # wrist 2
+        (-3.14, 3.14),      # wrist 3
+        (0.0, 0.044),       # right finger
+        (0.0, 0.044),       # left finger
+    ]) # joint limits for arm
     arm_rot_offset: list[tuple[tuple[float, float, float], float]] = field(default_factory=lambda: [
-        ((1.0, 0.0, 0.0), -math.pi * 0.5),
-        ((0.0, 0.0, 1.0), -math.pi * 0.5),
-    ])
-    qpos_home: list[float] = field(default_factory=lambda: [0, np.pi/12, np.pi/12, 0, 0, 0, 0, 0])
-    q_angle_shuffle: list[float] = field(default_factory=lambda: [np.pi/2, np.pi/4, np.pi/4, np.pi/4, np.pi/4, np.pi/4, 0.01, 0.01])
-    joint_q_requires_grad: bool = True
-    body_q_requires_grad: bool = True
-    joint_attach_ke: float = 1600.0
-    joint_attach_kd: float = 20.0
+        ((1.0, 0.0, 0.0), -math.pi * 0.5), # quarter turn about x-axis
+        ((0.0, 0.0, 1.0), -math.pi * 0.5), # quarter turn about z-axis
+    ]) # list of axis angle rotations for initial arm orientation offset
+    qpos_home: list[float] = field(default_factory=lambda: [0, np.pi/12, np.pi/12, 0, 0, 0, 0, 0]) # home position for the arm
+    q_angle_shuffle: list[float] = field(default_factory=lambda: [np.pi/2, np.pi/4, np.pi/4, np.pi/4, np.pi/4, np.pi/4, 0.01, 0.01]) # amount of random noise to add to the arm joint angles
+    joint_q_requires_grad: bool = True # whether to require grad for the joint q
+    body_q_requires_grad: bool = True # whether to require grad for the body q
+    joint_attach_ke: float = 1600.0 # stiffness for the joint attach
+    joint_attach_kd: float = 20.0 # damping for the joint attach
 
 
 # -------------------------------------------------------------------
@@ -232,9 +231,9 @@ class Sim:
             base_translation = np.array([x, self.arm_height, z], dtype=np.float32)
             base_quat = np.array([self.initial_arm_orientation.x, self.initial_arm_orientation.y,
                                    self.initial_arm_orientation.z, self.initial_arm_orientation.w], dtype=np.float32)
-            # Define the target offset in world frame
-            target_offset = np.array([0.0, config.target_y_offset, config.target_z_offset], dtype=np.float32)
-            target_world = base_translation + target_offset
+            # Define the target offset in robot coordinates and transform to world
+            target_offset_local = np.array(config.target_offset, dtype=np.float32)
+            target_world = apply_transform_np(base_translation, base_quat, target_offset_local)
             self.target_origin.append(target_world)
             builder.add_builder(articulation_builder, xform=wp.transform(wp.vec3(x, self.arm_height, z), self.initial_arm_orientation))
             num_joints_in_arm = len(config.qpos_home)

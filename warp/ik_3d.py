@@ -18,17 +18,6 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 
-@wp.kernel
-def forward_kinematics(
-    body_q: wp.array(dtype=wp.transform),
-    num_links: int,
-    ee_link_index: int,
-    ee_link_offset: wp.vec3,
-    ee_pos: wp.array(dtype=wp.vec3),
-):
-    tid = wp.tid()
-    ee_pos[tid] = wp.transform_point(body_q[tid * num_links + ee_link_index], ee_link_offset)
-
 @dataclass
 class SimConfig:
     device: str = None # device to run the simulation on
@@ -76,6 +65,17 @@ class SimConfig:
     body_q_requires_grad: bool = True # whether to require grad for the body q
     joint_attach_ke: float = 1600.0 # stiffness for the joint attach
     joint_attach_kd: float = 20.0 # damping for the joint attach
+
+@wp.kernel
+def forward_kinematics(
+    body_q: wp.array(dtype=wp.transform),
+    num_links: int,
+    ee_link_index: int,
+    ee_link_offset: wp.vec3,
+    ee_pos: wp.array(dtype=wp.vec3),
+):
+    tid = wp.tid()
+    ee_pos[tid] = wp.transform_point(body_q[tid * num_links + ee_link_index], ee_link_offset)
 
 class Sim:
     def __init__(self, config: SimConfig):
