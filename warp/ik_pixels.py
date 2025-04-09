@@ -39,8 +39,8 @@ class SimConfig:
     urdf_path: str # path to the urdf file
     usd_output_path: str # path to the usd file to save the model
     ee_link_offset: tuple[float, float, float] # offset from the ee_gripper_link to the end effector
-    gizmo_radius: float # radius of the gizmo
-    gizmo_length: float # length of the gizmo
+    gizmo_radius: float # radius of the gizmo (used for arrow base radius)
+    gizmo_length: float # total length of the gizmo arrow
     gizmo_color_x_ee: tuple[float, float, float] # color of the x gizmo for the ee
     gizmo_color_y_ee: tuple[float, float, float] # color of the y gizmo for the ee
     gizmo_color_z_ee: tuple[float, float, float] # color of the z gizmo for the ee
@@ -70,7 +70,6 @@ class Sim:
         self.render_time = config.start_time
         self.fps = config.fps
         self.frame_dt = 1.0 / self.fps
-
         articulation_builder = wp.sim.ModelBuilder()
         wp.sim.parse_urdf(
             os.path.expanduser(config.urdf_path),
@@ -79,13 +78,11 @@ class Sim:
             floating=False,
         )
         builder = wp.sim.ModelBuilder()
-
         self.step_size = config.step_size
         self.num_links = len(articulation_builder.joint_type)
         self.dof = len(articulation_builder.joint_q)
         self.joint_limits = config.joint_limits # TODO: parse from URDF
         log.info(f"Parsed URDF with {self.num_links} links and {self.dof} dof")
-
         # Find the ee_gripper_link index by looking at joint connections
         self.ee_link_offset = wp.vec3(config.ee_link_offset)
         self.ee_link_index = -1
@@ -95,7 +92,6 @@ class Sim:
                 break
         if self.ee_link_index == -1:
             raise ValueError("Could not find ee_gripper joint in URDF")
-
         # initial arm orientation is composed of axis angle rotation sequence
         _initial_arm_orientation = None
         for i in range(len(config.arm_rot_offset)):
@@ -105,8 +101,7 @@ class Sim:
             else:
                 _initial_arm_orientation *= wp.quat_from_axis_angle(wp.vec3(axis), angle)
         self.initial_arm_orientation = _initial_arm_orientation
-
-        # targets are a 3D pose visualized with line strip gizmos
+        # targets are a 3D pose visualized with cone gizmos
         self.target_origin = []
         self.target_z_offset = config.target_z_offset
         self.target_y_offset = config.target_y_offset
@@ -123,11 +118,11 @@ class Sim:
                 xform=wp.transform(wp.vec3(x, self.arm_height, z), self.initial_arm_orientation),
             )
             self.target_origin.append((x, self.target_y_offset, z + self.target_z_offset))
-            for i in range(len(config.qpos_home)):
+            num_joints_in_arm = len(config.qpos_home)
+            for i in range(num_joints_in_arm):
                 value = config.qpos_home[i] + self.rng.uniform(-config.q_angle_shuffle[i], config.q_angle_shuffle[i])
-                builder.joint_q[-len(config.qpos_home) + i] = np.clip(value, config.joint_limits[i][0], config.joint_limits[i][1])
+                builder.joint_q[-num_joints_in_arm + i] = np.clip(value, config.joint_limits[i][0], config.joint_limits[i][1])
         self.target_origin = np.array(self.target_origin)
-
         # finalize model
         self.model = builder.finalize()
         self.model.ground = False
@@ -135,13 +130,11 @@ class Sim:
         self.model.body_q.requires_grad = config.body_q_requires_grad
         self.model.joint_attach_ke = config.joint_attach_ke
         self.model.joint_attach_kd = config.joint_attach_kd
-            
         self.integrator = wp.sim.SemiImplicitIntegrator()
         if not config.headless:
             self.renderer = wp.sim.render.SimRenderer(self.model, config.usd_output_path)
         else:
             self.renderer = None
-
         # simulation state
         self.ee_pos = wp.zeros(self.num_envs, dtype=wp.vec3, requires_grad=True)
         self.state = self.model.state(requires_grad=True)
@@ -285,7 +278,6 @@ def run_sim(config: SimConfig):
     log.info(f"simulation complete!")
     log.info(f"performed {config.num_rollouts * config.train_iters} steps")
     log.info(f"step time: {avg_time:.3f} ms, {avg_steps_second:.2f} steps/s")
-            
 
 if __name__ == "__main__":
     import argparse
@@ -293,7 +285,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument("--device", type=str, default=None, help="Override the default Warp device.")
     parser.add_argument("--num_envs", type=int, default=16, help="Number of environments to simulate.")
-    parser.add_argument("--headless", type=bool, default=False, help="Run in headless mode, suppressing the opening of any graphical windows.")
+    parser.add_argument("--headless", action='store_true', help="Run in headless mode, suppressing the opening of any graphical windows.")
     parser.add_argument("--num_rollouts", type=int, default=2, help="Number of rollouts to perform.")
     parser.add_argument("--train_iters", type=int, default=16, help="Number of training iterations per rollout.")
     args = parser.parse_known_args()[0]
@@ -310,14 +302,14 @@ if __name__ == "__main__":
         urdf_path="~/dev/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf",
         usd_output_path="ik_trossen.usd",
         ee_link_offset=(0.0, 0.0, 0.0),
-        gizmo_radius=0.005,
-        gizmo_length=0.02,
-        gizmo_color_x_ee=(1.0, 0.0, 0.0),
-        gizmo_color_x_target=(1.0, 0.5, 0.5),
-        gizmo_color_y_ee=(0.0, 1.0, 0.0),
-        gizmo_color_y_target=(0.5, 1.0, 0.5),
-        gizmo_color_z_ee=(0.0, 0.0, 1.0),
-        gizmo_color_z_target=(0.5, 0.5, 1.0),
+        gizmo_radius=0.005, # radius of cone
+        gizmo_length=0.05, # half-length of cone
+        gizmo_color_x_ee=(1.0, 0.0, 0.0), # red
+        gizmo_color_x_target=(1.0, 0.5, 0.5), # light red
+        gizmo_color_y_ee=(0.0, 1.0, 0.0), # green
+        gizmo_color_y_target=(0.5, 1.0, 0.5), # light green
+        gizmo_color_z_ee=(0.0, 0.0, 1.0), # blue
+        gizmo_color_z_target=(0.5, 0.5, 1.0), # light blue
         arm_spacing_xz=1.0,
         arm_height=0.0,
         target_z_offset=0.3,
