@@ -7,7 +7,6 @@ import time
 import numpy as np
 
 import warp as wp
-import warp.examples
 import warp.sim
 import warp.sim.render
 
