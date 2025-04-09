@@ -30,40 +30,23 @@ def compute_ik_loss(
     ee_pose: wp.array(dtype=wp.transform),
     target_pos: wp.array(dtype=wp.vec3),
     target_quat: wp.array(dtype=wp.quat),
-    kp_pos: float,
-    kp_rot: float,
-    loss: wp.array(dtype=float),
+    kp_pos: wp.float32,
+    kp_rot: wp.float32,
+    loss: wp.array(dtype=wp.float32),
 ):
     tid = wp.tid()
-
-    # --- Position Error ---
     current_pos = wp.transform_get_translation(ee_pose[tid])
     pos_err = target_pos[tid] - current_pos
     loss_pos = wp.dot(pos_err, pos_err)
-
-    # --- Rotation Error (Manual Calculation) ---
     current_quat = wp.transform_get_rotation(ee_pose[tid])
     target_q = target_quat[tid]
-
-    # Calculate the difference quaternion: delta_q = target_q * inverse(current_quat)
     q_inv = wp.quat_inverse(current_quat)
     delta_q = wp.mul(target_q, q_inv)
-
-    # Ensure w is positive (shortest path rotation)
-    # If w is negative, the rotation is > 180 degrees,
-    # negate the quaternion to get the equivalent rotation < 180 degrees.
-    if delta_q.w < 0.0:
-        # delta_q = -delta_q # This would negate w too, keep w positive convention
-        delta_q = wp.quat(-delta_q.x, -delta_q.y, -delta_q.z, -delta_q.w)
-
-
-    # The error vector is 2.0 * vector part of the delta quaternion
-    # This approximates the axis-angle rotation vector.
-    rot_err = 2.0 * wp.vec3(delta_q.x, delta_q.y, delta_q.z)
+    if delta_q[3] < 0.0:
+        delta_q = wp.quat(-delta_q[0], -delta_q[1], -delta_q[2], -delta_q[3])
+    rot_err = 2.0 * wp.vec3(delta_q[0], delta_q[1], delta_q[2])
     loss_rot = wp.dot(rot_err, rot_err)
-
-    # --- Combined Loss ---
-    loss[tid] = kp_pos * loss_pos + kp_rot * loss_rot
+    loss[tid] = wp.float32(kp_pos * loss_pos + kp_rot * loss_rot)
 
 @dataclass
 class SimConfig:
@@ -77,7 +60,7 @@ class SimConfig:
     start_time: float = 0.0 # start time for the simulation
     fps: int = 60 # frames per second
     urdf_path: str = "~/dev/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf" # path to the urdf file
-    usd_output_path: str = "~/dev/cu/warp/ik_output.usd" # path to the usd file to save the model
+    usd_output_path: str = "~/dev/cu/warp/ik_output_6d.usd" # path to the usd file to save the model
     ee_link_offset: tuple[float, float, float] = (0.0, 0.0, 0.0) # offset from the ee_gripper_link to the end effector
     kp_pos: float = 100.0 # gain for position error
     kp_rot: float = 1.0 # gain for rotation error
@@ -200,7 +183,7 @@ class Sim:
         self.target_pos = wp.array(initial_target_pos_np, dtype=wp.vec3, requires_grad=False, device=self.device)
         self.target_quat = wp.array(initial_target_quat_np, dtype=wp.quat, requires_grad=False, device=self.device)
         self.state = self.model.state(requires_grad=True)
-        self.ik_loss = wp.zeros(self.num_envs, dtype=float, device=self.device)
+        self.ik_loss = wp.zeros(self.num_envs, dtype=wp.float32, requires_grad=False, device=self.device)
         self.profiler = {}
         self.tape = None
         self.pos_error_norm = 0.0
@@ -222,19 +205,45 @@ class Sim:
         """ Computes the IK update using gradients of a loss function. """
         self.tape = wp.Tape()
         with self.tape:
+            # Forward pass
             self.compute_ee_pose()
             wp.launch(
                 compute_ik_loss,
                 dim=self.num_envs,
-                inputs=[self.ee_pose, self.target_pos, self.target_quat, self.config.kp_pos, self.config.kp_rot],
+                inputs=[
+                    self.ee_pose,
+                    self.target_pos,
+                    self.target_quat,
+                    wp.float32(self.config.kp_pos),
+                    wp.float32(self.config.kp_rot),
+                ],
                 outputs=[self.ik_loss],
                 device=self.device
             )
-            total_loss = wp.sum(self.ik_loss)
 
-        self.tape.backward(loss=total_loss)
-        delta_q = self.tape.gradients[self.model.joint_q]
-        self.tape.zero() # Clear gradients for next step
+        # Create adjoint gradient with explicit wp.float32 type
+        loss_adjoint = wp.ones(shape=self.ik_loss.shape, dtype=wp.float32, device=self.device)
+
+        # Backward pass
+        self.tape.backward(grads={self.ik_loss: loss_adjoint})
+
+        # Retrieve gradients
+        if self.model.joint_q in self.tape.gradients:
+            delta_q = self.tape.gradients[self.model.joint_q]
+            # Ensure delta_q is not None (can happen if computations don't depend on joint_q)
+            if delta_q is None:
+                log.warning("Gradients for model.joint_q are None. Returning zero delta_q.")
+                delta_q_shape = self.model.joint_q.shape
+                delta_q_dtype = self.model.joint_q.dtype # Match original joint q type
+                delta_q = wp.zeros(shape=delta_q_shape, dtype=delta_q_dtype, device=self.device)
+
+        else:
+            log.warning("No gradients entry found for model.joint_q. Returning zero delta_q.")
+            delta_q_shape = self.model.joint_q.shape
+            delta_q_dtype = self.model.joint_q.dtype # Match original joint q type
+            delta_q = wp.zeros(shape=delta_q_shape, dtype=delta_q_dtype, device=self.device)
+
+        self.tape.zero()
         return delta_q
 
     def step(self):

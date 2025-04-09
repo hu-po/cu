@@ -7,6 +7,7 @@ import time
 import numpy as np
 
 import warp as wp
+import warp.examples
 import warp.sim
 import warp.sim.render
 
@@ -29,33 +30,48 @@ def forward_kinematics(
     tid = wp.tid()
     ee_pos[tid] = wp.transform_point(body_q[tid * num_links + ee_link_index], ee_link_offset)
 
+@wp.kernel
+def compute_jacobian_kernel(
+    ee_pos: wp.array(dtype=wp.vec3),
+    joint_q_grad: wp.array(dtype=wp.float32),
+    num_envs: int,
+    dof: int,
+    jacobians: wp.array(dtype=wp.float32)
+):
+    tid = wp.tid()
+    env = tid // (3 * dof)
+    dim = (tid // dof) % 3
+    joint_idx = tid % dof
+    if env < num_envs:
+        jacobians[env * 3 * dof + dim * dof + joint_idx] = joint_q_grad[env * dof + joint_idx]
+
 @dataclass
 class SimConfig:
-    device: str = None # device to run the simulation on
-    seed: int = 42 # random seed
-    headless: bool = False # turns off rendering
-    num_envs: int = 16 # number of parallel environments
-    num_rollouts: int = 2 # number of rollouts to perform
-    train_iters: int = 32 # number of training iterations per rollout
-    start_time: float = 0.0 # start time for the simulation
-    fps: int = 60 # frames per second
-    step_size: float = 1.0 # step size in q space for updates
-    urdf_path: str = "~/dev/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf" # path to the urdf file
-    usd_output_path: str = "~/dev/cu/warp/ik_output_3d.usd" # path to the usd file to save the model
-    ee_link_offset: tuple[float, float, float] = (0.0, 0.0, 0.0) # offset from the ee_gripper_link to the end effector
-    gizmo_radius: float = 0.005 # radius of the gizmo (used for arrow base radius)
-    gizmo_length: float = 0.05 # total length of the gizmo arrow
-    gizmo_color_x_ee: tuple[float, float, float] = (1.0, 0.0, 0.0) # color of the x gizmo for the ee
-    gizmo_color_y_ee: tuple[float, float, float] = (0.0, 1.0, 0.0) # color of the y gizmo for the ee
-    gizmo_color_z_ee: tuple[float, float, float] = (0.0, 0.0, 1.0) # color of the z gizmo for the ee
-    gizmo_color_x_target: tuple[float, float, float] = (1.0, 0.5, 0.5) # color of the x gizmo for the target
-    gizmo_color_y_target: tuple[float, float, float] = (0.5, 1.0, 0.5) # color of the y gizmo for the target
-    gizmo_color_z_target: tuple[float, float, float] = (0.5, 0.5, 1.0) # color of the z gizmo for the target
-    arm_spacing_xz: float = 1.0 # spacing between arms in the x-z plane
-    arm_height: float = 0.0 # height of the arm off the floor
-    target_z_offset: float = 0.3 # offset of the target in the z direction
-    target_y_offset: float = 0.1 # offset of the target in the y direction
-    target_spawn_box_size: float = 0.1 # size of the box to spawn the target in
+    device: str = None  # device to run the simulation on
+    seed: int = 42  # random seed
+    headless: bool = False  # turns off rendering
+    num_envs: int = 16  # number of parallel environments
+    num_rollouts: int = 2  # number of rollouts to perform
+    train_iters: int = 64  # number of training iterations per rollout
+    start_time: float = 0.0  # start time for the simulation
+    fps: int = 60  # frames per second
+    step_size: float = 1.0  # step size in q space for updates
+    urdf_path: str = "~/dev/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf"  # path to the urdf file
+    usd_output_path: str = "~/dev/cu/warp/ik_output_3d_grok.usd"  # path to the usd file to save the model
+    ee_link_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)  # offset from the ee_gripper_link to the end effector
+    gizmo_radius: float = 0.005  # radius of the gizmo (used for arrow base radius)
+    gizmo_length: float = 0.05  # total length of the gizmo arrow
+    gizmo_color_x_ee: tuple[float, float, float] = (1.0, 0.0, 0.0)  # color of the x gizmo for the ee
+    gizmo_color_y_ee: tuple[float, float, float] = (0.0, 1.0, 0.0)  # color of the y gizmo for the ee
+    gizmo_color_z_ee: tuple[float, float, float] = (0.0, 0.0, 1.0)  # color of the z gizmo for the ee
+    gizmo_color_x_target: tuple[float, float, float] = (1.0, 0.5, 0.5)  # color of the x gizmo for the target
+    gizmo_color_y_target: tuple[float, float, float] = (0.5, 1.0, 0.5)  # color of the y gizmo for the target
+    gizmo_color_z_target: tuple[float, float, float] = (0.5, 0.5, 1.0)  # color of the z gizmo for the target
+    arm_spacing_xz: float = 1.0  # spacing between arms in the x-z plane
+    arm_height: float = 0.0  # height of the arm off the floor
+    target_z_offset: float = 0.3  # offset of the target in the z direction
+    target_y_offset: float = 0.1  # offset of the target in the y direction
+    target_spawn_box_size: float = 0.1  # size of the box to spawn the target in
     joint_limits: list[tuple[float, float]] = field(default_factory=lambda: [
         (-3.054, 3.054),    # base
         (0.0, 3.14),        # shoulder
@@ -65,17 +81,17 @@ class SimConfig:
         (-3.14, 3.14),      # wrist 3
         (0.0, 0.044),       # right finger
         (0.0, 0.044),       # left finger
-    ]) # joint limits for arm
+    ])  # joint limits for arm
     arm_rot_offset: list[tuple[tuple[float, float, float], float]] = field(default_factory=lambda: [
-        ((1.0, 0.0, 0.0), -math.pi * 0.5), # quarter turn about x-axis
-        ((0.0, 0.0, 1.0), -math.pi * 0.5), # quarter turn about z-axis
-    ]) # list of axis angle rotations for initial arm orientation offset
-    qpos_home: list[float] = field(default_factory=lambda: [0, np.pi/12, np.pi/12, 0, 0, 0, 0, 0]) # home position for the arm
-    q_angle_shuffle: list[float] = field(default_factory=lambda: [np.pi/2, np.pi/4, np.pi/4, np.pi/4, np.pi/4, np.pi/4, 0.01, 0.01]) # amount of random noise to add to the arm joint angles
-    joint_q_requires_grad: bool = True # whether to require grad for the joint q
-    body_q_requires_grad: bool = True # whether to require grad for the body q
-    joint_attach_ke: float = 1600.0 # stiffness for the joint attach
-    joint_attach_kd: float = 20.0 # damping for the joint attach
+        ((1.0, 0.0, 0.0), -math.pi * 0.5),  # quarter turn about x-axis
+        ((0.0, 0.0, 1.0), -math.pi * 0.5),  # quarter turn about z-axis
+    ])  # list of axis angle rotations for initial arm orientation offset
+    qpos_home: list[float] = field(default_factory=lambda: [0, np.pi/12, np.pi/12, 0, 0, 0, 0, 0])  # home position for the arm
+    q_angle_shuffle: list[float] = field(default_factory=lambda: [np.pi/2, np.pi/8, np.pi/8, np.pi/8, np.pi/8, np.pi/8, 0.01, 0.01])  # amount of random noise to add to the arm joint angles
+    joint_q_requires_grad: bool = True  # whether to require grad for the joint q
+    body_q_requires_grad: bool = True  # whether to require grad for the body q
+    joint_attach_ke: float = 1600.0  # stiffness for the joint attach
+    joint_attach_kd: float = 20.0  # damping for the joint attach
 
 class Sim:
     def __init__(self, config: SimConfig):
@@ -97,7 +113,7 @@ class Sim:
         self.step_size = config.step_size
         self.num_links = len(articulation_builder.joint_type)
         self.dof = len(articulation_builder.joint_q)
-        self.joint_limits = config.joint_limits # TODO: parse from URDF
+        self.joint_limits = config.joint_limits  # TODO: parse from URDF
         log.info(f"Parsed URDF with {self.num_links} links and {self.dof} dof")
         # Find the ee_gripper_link index by looking at joint connections
         self.ee_link_offset = wp.vec3(config.ee_link_offset)
@@ -138,9 +154,9 @@ class Sim:
             for i in range(num_joints_in_arm):
                 value = config.qpos_home[i] + self.rng.uniform(-config.q_angle_shuffle[i], config.q_angle_shuffle[i])
                 builder.joint_q[-num_joints_in_arm + i] = np.clip(value, config.joint_limits[i][0], config.joint_limits[i][1])
-        self.target_origin = np.array(self.target_origin)
+        self.target_origin = wp.array(self.target_origin, dtype=wp.vec3, device=self.config.device)
         # finalize model
-        self.model = builder.finalize()
+        self.model = builder.finalize(device=self.config.device)
         self.model.ground = False
         self.model.joint_q.requires_grad = config.joint_q_requires_grad
         self.model.body_q.requires_grad = config.body_q_requires_grad
@@ -152,9 +168,9 @@ class Sim:
         else:
             self.renderer = None
         # simulation state
-        self.ee_pos = wp.zeros(self.num_envs, dtype=wp.vec3, requires_grad=True)
+        self.ee_pos = wp.zeros(self.num_envs, dtype=wp.vec3, requires_grad=True, device=self.config.device)
         self.state = self.model.state(requires_grad=True)
-        self.targets = self.target_origin.copy()
+        self.targets = self.target_origin  # Already a wp.array
         self.profiler = {}
 
     def compute_ee_position(self):
@@ -165,26 +181,28 @@ class Sim:
             dim=self.num_envs,
             inputs=[self.state.body_q, self.num_links, self.ee_link_index, self.ee_link_offset],
             outputs=[self.ee_pos],
+            device=self.config.device
         )
         return self.ee_pos
 
     def compute_jacobian(self):
         """ Computes the Jacobian of the end-effector position. """
-        # our function has 3 outputs (EE position), so we need a 3xN jacobian per environment
-        jacobians = np.empty((self.num_envs, 3, self.dof), dtype=np.float32)
+        jacobians = wp.zeros(self.num_envs * 3 * self.dof, dtype=wp.float32, device=self.config.device)
         tape = wp.Tape()
         with tape:
             self.compute_ee_position()
         for o in range(3):
-            # select which row of the Jacobian we want to compute
-            select_index = np.zeros(3)
-            select_index[o] = 1.0
-            e = wp.array(np.tile(select_index, self.num_envs), dtype=wp.vec3)
+            select_index = np.zeros(3); select_index[o] = 1.0
+            e = wp.array(np.tile(select_index, self.num_envs), dtype=wp.vec3, device=self.config.device)
             tape.backward(grads={self.ee_pos: e})
-            q_grad_i = tape.gradients[self.model.joint_q]
-            jacobians[:, o, :] = q_grad_i.numpy().reshape(self.num_envs, self.dof)
+            wp.launch(
+                compute_jacobian_kernel,
+                dim=self.num_envs * 3 * self.dof,  # Adjusted to cover all elements
+                inputs=[self.ee_pos, tape.gradients[self.model.joint_q], self.num_envs, self.dof, jacobians],
+                device=self.config.device
+            )
             tape.zero()
-        return jacobians
+        return wp.array(jacobians.numpy().reshape(self.num_envs, 3, self.dof), dtype=wp.float32, device=self.config.device)
 
     def compute_fd_jacobian(self, eps=1e-4):
         """ Computes the finite difference Jacobian of the end-effector position. """
@@ -209,14 +227,15 @@ class Sim:
         with wp.ScopedTimer("jacobian", print=False, active=True, dict=self.profiler):
             jacobians = self.compute_jacobian()
         self.ee_pos_np = self.compute_ee_position().numpy()
-        error = self.targets - self.ee_pos_np
+        error = self.targets.numpy() - self.ee_pos_np  # Convert targets to NumPy for compatibility
         self.error = error.reshape(self.num_envs, 3, 1)
         # compute Jacobian transpose update
-        delta_q = np.matmul(jacobians.transpose(0, 2, 1), self.error)
+        delta_q = np.matmul(jacobians.numpy().transpose(0, 2, 1), self.error)  # Convert jacobians to NumPy
         self.model.joint_q = wp.array(
             self.model.joint_q.numpy() + self.step_size * delta_q.flatten(),
             dtype=wp.float32,
             requires_grad=True,
+            device=self.config.device
         )
 
     def render_gizmos(self):
@@ -234,10 +253,8 @@ class Sim:
         # Rotation to point cone along +Z (e.g., rotate around X by +90 deg)
         rot_z = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), math.pi / 2.0)
 
-        # Ensure positions are NumPy for iteration
-        # self.targets should already be numpy from __init__/run_sim
-        # self.ee_pos_np is already numpy from step()
-        targets_np = self.targets
+        # Convert Warp arrays to NumPy for rendering compatibility
+        targets_np = self.targets.numpy()
         ee_pos_np = self.ee_pos_np
 
         for i in range(self.num_envs):
@@ -276,12 +293,14 @@ def run_sim(config: SimConfig):
         log.debug("finite diff:")
         log.debug(sim.compute_fd_jacobian())
         for i in range(config.num_rollouts):
-            # select new random target points for all envs
-            sim.targets = sim.target_origin.copy()
-            sim.targets[:, :] += sim.rng.uniform(
-                -config.target_spawn_box_size/2,
-                config.target_spawn_box_size/2,
-                size=(sim.num_envs, 3),
+            sim.targets = wp.array(
+                sim.target_origin.numpy().copy() + sim.rng.uniform(
+                    -config.target_spawn_box_size/2,
+                    config.target_spawn_box_size/2,
+                    size=(sim.num_envs, 3)
+                ),
+                dtype=wp.vec3,
+                device=config.device
             )
             for j in range(config.train_iters):
                 sim.step()
