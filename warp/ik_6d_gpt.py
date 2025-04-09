@@ -84,6 +84,17 @@ def apply_transform_np(translation, quat, point):
     R = quat_to_rot_matrix_np(quat)
     return translation + R.dot(point)
 
+# Helper: multiply two quaternions (as numpy arrays [x,y,z,w]).
+def quat_mul_np(q1, q2):
+    """Multiply two quaternions q1*q2 (numpy arrays [x,y,z,w])."""
+    x1, y1, z1, w1 = q1
+    x2, y2, z2, w2 = q2
+    return np.array([
+        w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+        w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+        w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+        w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+    ], dtype=np.float32)
 
 # -------------------------------------------------------------------
 # Device helper functions for quaternion operations.
@@ -221,10 +232,9 @@ class Sim:
             base_translation = np.array([x, self.arm_height, z], dtype=np.float32)
             base_quat = np.array([self.initial_arm_orientation.x, self.initial_arm_orientation.y,
                                    self.initial_arm_orientation.z, self.initial_arm_orientation.w], dtype=np.float32)
-            # Define the desired target offset in the arm's local frame.
-            # Here we assume the arm is meant to reach "forward" along negative X.
-            target_offset_local = np.array([-config.target_z_offset, config.target_y_offset, 0.0], dtype=np.float32)
-            target_world = apply_transform_np(base_translation, base_quat, target_offset_local)
+            # Define the target offset in world frame
+            target_offset = np.array([0.0, config.target_y_offset, config.target_z_offset], dtype=np.float32)
+            target_world = base_translation + target_offset
             self.target_origin.append(target_world)
             builder.add_builder(articulation_builder, xform=wp.transform(wp.vec3(x, self.arm_height, z), self.initial_arm_orientation))
             num_joints_in_arm = len(config.qpos_home)
@@ -323,50 +333,135 @@ class Sim:
     def render_gizmos(self):
         if self.renderer is None:
             return
+
+        # Ensure FK is up-to-date for rendering the current state
+        # This might be redundant if called right after step(), but safe to include.
+        # wp.sim.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, None, self.state)
+
         radius = self.config.gizmo_radius
-        half_height = self.config.gizmo_length / 2.0
+        # Warp cones are defined by height along Y axis, so half_height is used for centering later
+        cone_height = self.config.gizmo_length
+        cone_half_height = cone_height / 2.0
 
-        # Create base quaternions for each axis
-        rot_x = wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), -math.pi / 2.0)
-        rot_y = wp.quat_identity()
-        rot_z = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), math.pi / 2.0)
+        # --- Define Base Rotations for Gizmo Axes ---
+        # We want the cone's length (local Y) to align with the world X, Y, or Z axis.
+        # render_cone uses local Y as the height axis.
+        # Rotate cone's Y axis to align with world X: Rotate +90 deg around Z
+        rot_x_axis = wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), math.pi / 2.0)
+        # Rotate cone's Y axis to align with world Y: Identity (no rotation needed)
+        rot_y_axis = wp.quat_identity()
+        # Rotate cone's Y axis to align with world Z: Rotate -90 deg around X
+        rot_z_axis = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), -math.pi / 2.0)
 
-        # Convert to numpy quaternions (x,y,z,w format)
-        rot_x_np = np.array([rot_x.x, rot_x.y, rot_x.z, rot_x.w], dtype=np.float32)
-        rot_y_np = np.array([rot_y.x, rot_y.y, rot_y.z, rot_y.w], dtype=np.float32)
-        rot_z_np = np.array([rot_z.x, rot_z.y, rot_z.z, rot_z.w], dtype=np.float32)
+        # Convert base rotations to numpy [x,y,z,w] format
+        rot_x_np = rot_x_axis
+        rot_y_np = rot_y_axis
+        rot_z_np = rot_z_axis
 
-        # Render target gizmos with orientation.
+        # Get current body transforms (needed for EE pose)
+        # Ensure the data is on the host for processing
+        current_body_q = self.state.body_q.numpy() # shape: (num_envs * num_links, 8) [px,py,pz, qx,qy,qz,qw, scale=1]
+
         for e in range(self.num_envs):
-            target_pos_tuple = tuple(self.targets[e])
-            target_ori_np = self.target_ori[e]
-            # Convert rotations to tuples for render_cone
-            target_rot_x = tuple(target_ori_np * rot_x_np)
-            target_rot_y = tuple(target_ori_np * rot_y_np)
-            target_rot_z = tuple(target_ori_np * rot_z_np)
-            self.renderer.render_cone(f"target_x_{e}", target_pos_tuple, target_rot_x, radius, half_height, color=self.config.gizmo_color_x_target)
-            self.renderer.render_cone(f"target_y_{e}", target_pos_tuple, target_rot_y, radius, half_height, color=self.config.gizmo_color_y_target)
-            self.renderer.render_cone(f"target_z_{e}", target_pos_tuple, target_rot_z, radius, half_height, color=self.config.gizmo_color_z_target)
+            # --- Target Gizmos ---
+            target_pos_np = self.targets[e]
+            target_ori_np = self.target_ori[e] # Shape [x,y,z,w]
 
-            # Render end-effector gizmos.
-            ee_pos_np = self.compute_ee_error().numpy().reshape(self.num_envs, 6)[:, 0:3]
-            ee_pos_tuple = tuple(ee_pos_np[e])
-            ee_rot_x = tuple( * rot_x_np)
-            ee_rot_y = tuple( * rot_y_np)
-            ee_rot_z = tuple( * rot_z_np)
-            self.renderer.render_cone(f"ee_pos_x_{e}", ee_pos_tuple, ee_rot_x, radius, half_height, color=self.config.gizmo_color_x_ee)
-            self.renderer.render_cone(f"ee_pos_y_{e}", ee_pos_tuple, ee_rot_y, radius, half_height, color=self.config.gizmo_color_y_ee)
-            self.renderer.render_cone(f"ee_pos_z_{e}", ee_pos_tuple, ee_rot_z, radius, half_height, color=self.config.gizmo_color_z_ee)
+            # Calculate final orientation for each target axis gizmo
+            # Final Orientation = Target Orientation * Base Axis Rotation
+            target_rot_x_np = quat_mul_np(target_ori_np, rot_x_np)
+            target_rot_y_np = quat_mul_np(target_ori_np, rot_y_np)
+            target_rot_z_np = quat_mul_np(target_ori_np, rot_z_np)
+
+            # Calculate position offset for cone base (tip is at origin before transform)
+            # We want the *center* of the gizmo line at the target position.
+            # Transform the offset vector (0, cone_half_height, 0) by the gizmo's rotation
+            # and subtract it from the target position.
+            offset_x = apply_transform_np(np.zeros(3), target_rot_x_np, np.array([0, cone_half_height, 0]))
+            offset_y = apply_transform_np(np.zeros(3), target_rot_y_np, np.array([0, cone_half_height, 0]))
+            offset_z = apply_transform_np(np.zeros(3), target_rot_z_np, np.array([0, cone_half_height, 0]))
+
+            # Render target cones
+            self.renderer.render_cone(
+                name=f"target_x_{e}",
+                pos=tuple(target_pos_np - offset_x),
+                rot=tuple(target_rot_x_np),
+                radius=radius,
+                half_height=cone_half_height,
+                color=self.config.gizmo_color_x_target
+            )
+            self.renderer.render_cone(
+                name=f"target_y_{e}",
+                pos=tuple(target_pos_np - offset_y),
+                rot=tuple(target_rot_y_np),
+                radius=radius,
+                half_height=cone_half_height,
+                color=self.config.gizmo_color_y_target
+            )
+            self.renderer.render_cone(
+                name=f"target_z_{e}",
+                pos=tuple(target_pos_np - offset_z),
+                rot=tuple(target_rot_z_np),
+                radius=radius,
+                half_height=cone_half_height,
+                color=self.config.gizmo_color_z_target
+            )
+
+            # --- End-Effector Gizmos ---
+            # Get the transform of the EE link for the current environment
+            ee_link_transform_flat = current_body_q[e * self.num_links + self.ee_link_index]
+            ee_link_pos_np = ee_link_transform_flat[0:3]
+            ee_link_ori_np = ee_link_transform_flat[3:7] # Shape [x,y,z,w]
+
+            # Calculate the world position of the EE tip (applying offset)
+            ee_tip_pos_np = apply_transform_np(ee_link_pos_np, ee_link_ori_np, self.ee_link_offset)
+
+            # Calculate final orientation for each EE axis gizmo
+            # Final Orientation = EE Link Orientation * Base Axis Rotation
+            ee_rot_x_np = quat_mul_np(ee_link_ori_np, rot_x_np)
+            ee_rot_y_np = quat_mul_np(ee_link_ori_np, rot_y_np)
+            ee_rot_z_np = quat_mul_np(ee_link_ori_np, rot_z_np)
+
+            # Calculate position offset for cone base
+            ee_offset_x = apply_transform_np(np.zeros(3), ee_rot_x_np, np.array([0, cone_half_height, 0]))
+            ee_offset_y = apply_transform_np(np.zeros(3), ee_rot_y_np, np.array([0, cone_half_height, 0]))
+            ee_offset_z = apply_transform_np(np.zeros(3), ee_rot_z_np, np.array([0, cone_half_height, 0]))
+
+
+            # Render EE cones
+            self.renderer.render_cone(
+                name=f"ee_pos_x_{e}",
+                pos=tuple(ee_tip_pos_np - ee_offset_x), # Use tip position
+                rot=tuple(ee_rot_x_np),             # Use calculated EE axis orientation
+                radius=radius,
+                half_height=cone_half_height,
+                color=self.config.gizmo_color_x_ee
+            )
+            self.renderer.render_cone(
+                name=f"ee_pos_y_{e}",
+                pos=tuple(ee_tip_pos_np - ee_offset_y),
+                rot=tuple(ee_rot_y_np),
+                radius=radius,
+                half_height=cone_half_height,
+                color=self.config.gizmo_color_y_ee
+            )
+            self.renderer.render_cone(
+                name=f"ee_pos_z_{e}",
+                pos=tuple(ee_tip_pos_np - ee_offset_z),
+                rot=tuple(ee_rot_z_np),
+                radius=radius,
+                half_height=cone_half_height,
+                color=self.config.gizmo_color_z_ee
+            )
 
     def render(self):
         if self.renderer is None:
             return
         self.renderer.begin_frame(self.render_time)
         self.renderer.render(self.state)
-        # self.render_gizmos()
+        self.render_gizmos()
         self.renderer.end_frame()
         self.render_time += self.frame_dt
-
 
 def run_sim(config: SimConfig):
     wp.init()
