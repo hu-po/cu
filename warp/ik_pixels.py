@@ -32,7 +32,7 @@ class SimConfig:
     headless: bool = False # turns off rendering
     num_envs: int = 16 # number of parallel environments
     num_rollouts: int = 2 # number of rollouts to perform
-    train_iters: int = 16 # number of training iterations per rollout
+    train_iters: int = 32 # number of training iterations per rollout
     start_time: float = 0.0 # start time for the simulation
     fps: int = 60 # frames per second
     step_size: float = 1.0 # step size in q space for updates
@@ -67,7 +67,7 @@ class SimConfig:
         ((0.0, 0.0, 1.0), -math.pi * 0.5), # quarter turn about z-axis
     ]) # list of axis angle rotations for initial arm orientation offset
     qpos_home: list[float] = field(default_factory=lambda: [0, np.pi/12, np.pi/12, 0, 0, 0, 0, 0]) # home position for the arm
-    q_angle_shuffle: list[float] = field(default_factory=lambda: [np.pi/4, np.pi/8, np.pi/8, np.pi/8, np.pi/8, np.pi/8, 0.01, 0.01]) # amount of random noise to add to the arm joint angles
+    q_angle_shuffle: list[float] = field(default_factory=lambda: [np.pi/2, np.pi/4, np.pi/4, np.pi/4, np.pi/4, np.pi/4, 0.01, 0.01]) # amount of random noise to add to the arm joint angles
     joint_q_requires_grad: bool = True # whether to require grad for the joint q
     body_q_requires_grad: bool = True # whether to require grad for the body q
     joint_attach_ke: float = 1600.0 # stiffness for the joint attach
@@ -299,7 +299,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_envs", type=int, default=16, help="Number of environments to simulate.")
     parser.add_argument("--headless", action='store_true', help="Run in headless mode, suppressing the opening of any graphical windows.")
     parser.add_argument("--num_rollouts", type=int, default=2, help="Number of rollouts to perform.")
-    parser.add_argument("--train_iters", type=int, default=16, help="Number of training iterations per rollout.")
+    parser.add_argument("--train_iters", type=int, default=32, help="Number of training iterations per rollout.")
     args = parser.parse_known_args()[0]
     config = SimConfig(
         device=args.device,
