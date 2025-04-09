@@ -39,7 +39,14 @@ class SimConfig:
     urdf_path: str # path to the urdf file
     usd_output_path: str # path to the usd file to save the model
     ee_link_offset: tuple[float, float, float] # offset from the ee_gripper_link to the end effector
-    target_radius: float # radius of the target sphere
+    gizmo_radius: float # radius of the gizmo
+    gizmo_length: float # length of the gizmo
+    gizmo_color_x_ee: tuple[float, float, float] # color of the x gizmo for the ee
+    gizmo_color_y_ee: tuple[float, float, float] # color of the y gizmo for the ee
+    gizmo_color_z_ee: tuple[float, float, float] # color of the z gizmo for the ee
+    gizmo_color_x_target: tuple[float, float, float] # color of the x gizmo for the target
+    gizmo_color_y_target: tuple[float, float, float] # color of the y gizmo for the target
+    gizmo_color_z_target: tuple[float, float, float] # color of the z gizmo for the target
     arm_spacing_xz: float # spacing between arms in the x-z plane
     arm_height: float # height of the arm off the floor
     target_z_offset: float # offset of the target in the z direction
@@ -99,12 +106,10 @@ class Sim:
                 _initial_arm_orientation *= wp.quat_from_axis_angle(wp.vec3(axis), angle)
         self.initial_arm_orientation = _initial_arm_orientation
 
-        # targets are a 3D pose visualized as a sphere
+        # targets are a 3D pose visualized with line strip gizmos
         self.target_origin = []
-        self.target_radius = config.target_radius
         self.target_z_offset = config.target_z_offset
         self.target_y_offset = config.target_y_offset
-
         # parallel arms are spawned in a grid on the floor (x-z plane)
         self.arm_spacing_xz = config.arm_spacing_xz
         self.arm_height = config.arm_height
@@ -188,6 +193,7 @@ class Sim:
                 self.compute_ee_position()
                 f_minus = self.ee_pos.numpy()[e].copy()
                 jacobians[e, :, i] = (f_plus - f_minus) / (2 * eps)
+        self.model.joint_q.assign(q0)
         return jacobians
 
     def step(self):
@@ -204,19 +210,53 @@ class Sim:
             requires_grad=True,
         )
 
+    def render_gizmos(self):
+        if self.renderer is None:
+            return
+
+        radius = self.config.gizmo_radius
+        half_height = self.config.gizmo_length / 2.0
+        # Assuming default cone UP axis is Y (index 1 in render_cone)
+
+        # Rotation to point cone along +X (e.g., rotate around Z by -90 deg)
+        rot_x = wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), -math.pi / 2.0)
+        # Rotation to point cone along +Y (no rotation needed if default axis is Y)
+        rot_y = wp.quat_identity()
+        # Rotation to point cone along +Z (e.g., rotate around X by +90 deg)
+        rot_z = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), math.pi / 2.0)
+
+        # Ensure positions are NumPy for iteration
+        # self.targets should already be numpy from __init__/run_sim
+        # self.ee_pos_np is already numpy from step()
+        targets_np = self.targets
+        ee_pos_np = self.ee_pos_np
+
+        for i in range(self.num_envs):
+            # Convert individual positions to tuples for render_cone
+            target_pos_tuple = tuple(targets_np[i])
+            ee_pos_tuple = tuple(ee_pos_np[i])
+
+            # --- Target Gizmo (using unique names per environment) ---
+            self.renderer.render_cone(f"target_x_{i}", target_pos_tuple, rot_x, radius, half_height, color=self.config.gizmo_color_x_target)
+            self.renderer.render_cone(f"target_y_{i}", target_pos_tuple, rot_y, radius, half_height, color=self.config.gizmo_color_y_target)
+            self.renderer.render_cone(f"target_z_{i}", target_pos_tuple, rot_z, radius, half_height, color=self.config.gizmo_color_z_target)
+
+            # --- EE Gizmo (using unique names per environment) ---
+            self.renderer.render_cone(f"ee_pos_x_{i}", ee_pos_tuple, rot_x, radius, half_height, color=self.config.gizmo_color_x_ee)
+            self.renderer.render_cone(f"ee_pos_y_{i}", ee_pos_tuple, rot_y, radius, half_height, color=self.config.gizmo_color_y_ee)
+            self.renderer.render_cone(f"ee_pos_z_{i}", ee_pos_tuple, rot_z, radius, half_height, color=self.config.gizmo_color_z_ee)
+
     def render(self):
         if self.renderer is None:
             return
 
         self.renderer.begin_frame(self.render_time)
         self.renderer.render(self.state)
-        self.renderer.render_points("targets", self.targets, radius=self.target_radius)
-        self.renderer.render_points("ee_pos", self.ee_pos_np, radius=self.target_radius)
+        self.render_gizmos()
         self.renderer.end_frame()
         self.render_time += self.frame_dt
 
 def run_sim(config: SimConfig):
-    rng = np.random.default_rng(config.seed)
     wp.init()
     log.info(f"gpu enabled: {wp.get_device().is_cuda}")
     log.info("starting simulation")
@@ -229,7 +269,7 @@ def run_sim(config: SimConfig):
         for i in range(config.num_rollouts):
             # select new random target points for all envs
             sim.targets = sim.target_origin.copy()
-            sim.targets[:, :] += rng.uniform(
+            sim.targets[:, :] += sim.rng.uniform(
                 -config.target_spawn_box_size/2,
                 config.target_spawn_box_size/2,
                 size=(sim.num_envs, 3),
@@ -270,7 +310,14 @@ if __name__ == "__main__":
         urdf_path="~/dev/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf",
         usd_output_path="ik_trossen.usd",
         ee_link_offset=(0.0, 0.0, 0.0),
-        target_radius=0.03,
+        gizmo_radius=0.005,
+        gizmo_length=0.02,
+        gizmo_color_x_ee=(1.0, 0.0, 0.0),
+        gizmo_color_x_target=(1.0, 0.5, 0.5),
+        gizmo_color_y_ee=(0.0, 1.0, 0.0),
+        gizmo_color_y_target=(0.5, 1.0, 0.5),
+        gizmo_color_z_ee=(0.0, 0.0, 1.0),
+        gizmo_color_z_target=(0.5, 0.5, 1.0),
         arm_spacing_xz=1.0,
         arm_height=0.0,
         target_z_offset=0.3,
