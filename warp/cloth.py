@@ -32,15 +32,16 @@ class SimConfig:
     device: str = None  # Device to run the simulation on
     seed: int = 42  # Random seed
     headless: bool = False  # Turns off rendering
-    num_frames: int = 128  # Total number of frames to simulate
+    num_frames: int = 64  # Total number of frames to simulate
     fps: int = 60  # Frames per second
     sim_substeps: int = 32  # Number of simulation substeps per frame
     integrator_type: IntegratorType = IntegratorType.EULER  # Type of integrator
-    cloth_width: int = 16  # Cloth resolution in x
-    cloth_height: int = 16  # Cloth resolution in y
+    cloth_width: int = 64  # Cloth resolution in x
+    cloth_height: int = 64  # Cloth resolution in y
     cloth_cell_size: float = 0.01  # Size of each cloth cell
-    cloth_mass: float = 0.1  # Mass per cloth particle
-    cloth_pos: tuple[float, float, float] = (0.0, 3.0, 0.0)  # Initial position of cloth
+    cloth_particle_radius: float = 0.01 # Radius of each cloth cell for particle collisions
+    cloth_mass: float = 0.06  # Mass per cloth particle
+    cloth_pos: tuple[float, float, float] = (0.0, 2.8, 0.0)  # Initial position of cloth
     cloth_rot_axis: tuple[float, float, float] = (1.0, 0.0, 0.0)  # Axis for cloth rotation
     cloth_rot_angle: float = math.pi * 0.5  # Angle for cloth rotation (radians)
     cloth_vel: tuple[float, float, float] = (0.0, 0.0, 0.0)  # Initial velocity of cloth
@@ -67,7 +68,7 @@ class SimConfig:
     soft_contact_kd: float = 1.0e2  # Soft contact damping
     mesh_ke: float = 1.0e2  # Mesh contact stiffness
     mesh_kd: float = 1.0e2  # Mesh contact damping
-    mesh_kf: float = 1.0e1  # Mesh friction coefficient
+    mesh_kf: float = 1.0e3  # Mesh friction coefficient
 
 class Sim:
     def __init__(self, config: SimConfig):
@@ -120,6 +121,7 @@ class Sim:
             "dim_y": self.config.cloth_height,
             "cell_x": self.config.cloth_cell_size,
             "cell_y": self.config.cloth_cell_size,
+            "particle_radius": self.config.cloth_particle_radius,
             "mass": self.config.cloth_mass,
             "fix_left": self.config.fix_left,
         }
@@ -236,10 +238,10 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default=None, help="Override the default Warp device.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument("--headless", action='store_true', help="Run in headless mode.")
-    parser.add_argument("--num_frames", type=int, default=300, help="Total number of frames.")
-    parser.add_argument("--integrator", type=IntegratorType, choices=list(IntegratorType), default=IntegratorType.EULER, help="Type of integrator.")
-    parser.add_argument("--width", type=int, default=64, help="Cloth resolution in x.")
-    parser.add_argument("--height", type=int, default=32, help="Cloth resolution in y.")
+    # parser.add_argument("--num_frames", type=int, default=300, help="Total number of frames.")
+    # parser.add_argument("--integrator", type=IntegratorType, choices=list(IntegratorType), default=IntegratorType.EULER, help="Type of integrator.")
+    # parser.add_argument("--width", type=int, default=64, help="Cloth resolution in x.")
+    # parser.add_argument("--height", type=int, default=32, help="Cloth resolution in y.")
     
     args = parser.parse_known_args()[0]
     
@@ -247,10 +249,10 @@ if __name__ == "__main__":
         device=args.device,
         seed=args.seed,
         headless=args.headless,
-        num_frames=args.num_frames,
-        integrator_type=args.integrator,
-        cloth_width=args.width,
-        cloth_height=args.height,
+        # num_frames=args.num_frames,
+        # integrator_type=args.integrator,
+        # cloth_width=args.width,
+        # cloth_height=args.height,
     )
     
     run_sim(config)
