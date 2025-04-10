@@ -16,7 +16,7 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 log = logging.getLogger(__name__)
-log.setLevel(logging.INFO)
+log.setLevel(logging.DEBUG)
 
 
 @dataclass
@@ -24,9 +24,9 @@ class SimConfig:
     device: str = None # device to run the simulation on
     seed: int = 42 # random seed
     headless: bool = False # turns off rendering
-    num_envs: int = 16 # number of parallel environments
-    num_rollouts: int = 2 # number of rollouts to perform
-    train_iters: int = 64 # number of training iterations per rollout
+    num_envs: int = 1 # number of parallel environments
+    num_rollouts: int = 1 # number of rollouts to perform
+    train_iters: int = 3 # number of training iterations per rollout
     start_time: float = 0.0 # start time for the simulation
     fps: int = 60 # frames per second
     step_size: float = 1.0 # step size in q space for updates
@@ -205,6 +205,7 @@ class Sim:
             else:
                 _initial_arm_orientation *= wp.quat_from_axis_angle(wp.vec3(axis), angle)
         self.initial_arm_orientation = _initial_arm_orientation
+        log.debug(f"Initial arm orientation: {[self.initial_arm_orientation.x, self.initial_arm_orientation.y, self.initial_arm_orientation.z, self.initial_arm_orientation.w]}")
 
         # --- Revised target origin computation ---
         # Instead of using a raw grid, we compute each arm's target relative to its base transform.
@@ -233,6 +234,7 @@ class Sim:
         self.target_origin = np.array(self.target_origin)
         # Target orientation: default identity.
         self.target_ori = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32), (self.num_envs, 1))
+        log.debug(f"Initial target orientations (first env): {self.target_ori[0]}")
 
         # Finalize model.
         self.model = builder.finalize()
@@ -272,6 +274,8 @@ class Sim:
             ],
             outputs=[self.ee_error],
         )
+        error_np = self.ee_error.numpy()
+        log.debug(f"EE error (env 0): Pos [{error_np[0]:.4f}, {error_np[1]:.4f}, {error_np[2]:.4f}], Ori [{error_np[3]:.4f}, {error_np[4]:.4f}, {error_np[5]:.4f}]")
         return self.ee_error
 
     def compute_geometric_jacobian(self):
@@ -355,12 +359,13 @@ class Sim:
             # --- Target Gizmos ---
             target_pos_np = self.targets[e]
             target_ori_np = self.target_ori[e] # Shape [x,y,z,w]
+            log.debug(f"Env {e} - Target pos: {target_pos_np}, Target ori: {target_ori_np}")
 
             # Calculate final orientation for each target axis gizmo
-            # Final Orientation = Target Orientation * Base Axis Rotation
             target_rot_x_np = quat_mul_np(target_ori_np, rot_x_np)
             target_rot_y_np = quat_mul_np(target_ori_np, rot_y_np)
             target_rot_z_np = quat_mul_np(target_ori_np, rot_z_np)
+            log.debug(f"Env {e} - Target gizmo orientations - X: {target_rot_x_np}, Y: {target_rot_y_np}, Z: {target_rot_z_np}")
 
             # Calculate position offset for cone base (tip is at origin before transform)
             # We want the *center* of the gizmo line at the target position.
@@ -401,15 +406,16 @@ class Sim:
             ee_link_transform_flat = current_body_q[e * self.num_links + self.ee_link_index]
             ee_link_pos_np = ee_link_transform_flat[0:3]
             ee_link_ori_np = ee_link_transform_flat[3:7] # Shape [x,y,z,w]
+            log.debug(f"Env {e} - EE tip pos: {ee_link_pos_np}, EE ori: {ee_link_ori_np}")
 
             # Calculate the world position of the EE tip (applying offset)
             ee_tip_pos_np = apply_transform_np(ee_link_pos_np, ee_link_ori_np, self.ee_link_offset)
 
             # Calculate final orientation for each EE axis gizmo
-            # Final Orientation = EE Link Orientation * Base Axis Rotation
             ee_rot_x_np = quat_mul_np(ee_link_ori_np, rot_x_np)
             ee_rot_y_np = quat_mul_np(ee_link_ori_np, rot_y_np)
             ee_rot_z_np = quat_mul_np(ee_link_ori_np, rot_z_np)
+            log.debug(f"Env {e} - EE gizmo orientations - X: {ee_rot_x_np}, Y: {ee_rot_y_np}, Z: {ee_rot_z_np}")
 
             # Calculate position offset for cone base
             ee_offset_x = apply_transform_np(np.zeros(3), ee_rot_x_np, np.array([0, cone_half_height, 0]))
@@ -477,6 +483,7 @@ def run_sim(config: SimConfig):
             for e in range(sim.num_envs):
                 target_orientations[e] = quat_from_axis_angle_np(random_axes[e], random_angles[e])
             sim.target_ori = target_orientations
+            log.debug(f"Updated target orientation (env 0, rollout {i}): {sim.target_ori[0]}")
             for j in range(config.train_iters):
                 sim.step()
                 sim.render()
@@ -493,19 +500,19 @@ def run_sim(config: SimConfig):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument("--device", type=str, default=None, help="Override default Warp device.")
-    parser.add_argument("--num_envs", type=int, default=16, help="Number of environments to simulate.")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument("--headless", action='store_true', help="Run in headless mode.")
-    parser.add_argument("--num_rollouts", type=int, default=2, help="Number of rollouts to perform.")
-    parser.add_argument("--train_iters", type=int, default=64, help="Training iterations per rollout.")
+    # parser.add_argument("--num_envs", type=int, default=16, help="Number of environments to simulate.")
+    # parser.add_argument("--num_rollouts", type=int, default=2, help="Number of rollouts to perform.")
+    # parser.add_argument("--train_iters", type=int, default=64, help="Training iterations per rollout.")
     args = parser.parse_known_args()[0]
     config = SimConfig(
         device=args.device,
         seed=args.seed,
         headless=args.headless,
-        num_envs=args.num_envs,
-        num_rollouts=args.num_rollouts,
-        train_iters=args.train_iters,
+        # num_envs=args.num_envs,
+        # num_rollouts=args.num_rollouts,
+        # train_iters=args.train_iters,
     )
     run_sim(config)
