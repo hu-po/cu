@@ -31,7 +31,7 @@ class SimConfig:
     fps: int = 60 # frames per second
     step_size: float = 1.0 # step size in q space for updates
     urdf_path: str = "~/dev/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf" # path to the urdf file
-    usd_output_path: str = "~/dev/cu/warp/ik_output_6d_gpt.usd" # path to the usd file to save the model
+    usd_output_path: str = "~/dev/cu/warp/ik_6d_output.usd" # path to the usd file to save the model
     ee_link_offset: tuple[float, float, float] = (0.0, 0.0, 0.0) # offset from the ee_gripper_link to the end effector
     gizmo_radius: float = 0.005 # radius of the gizmo (used for arrow base radius)
     gizmo_length: float = 0.05 # total length of the gizmo arrow
@@ -159,19 +159,6 @@ def compute_ee_error_kernel(
     error_out[base + 3] = ori_err.x
     error_out[base + 4] = ori_err.y
     error_out[base + 5] = ori_err.z
-
-# -------------------------------------------------------------------
-# Original forward kinematics kernel (position only).
-@wp.kernel
-def forward_kinematics(
-    body_q: wp.array(dtype=wp.transform),
-    num_links: int,
-    ee_link_index: int,
-    ee_link_offset: wp.vec3,
-    ee_pos: wp.array(dtype=wp.vec3)
-):
-    tid = wp.tid()
-    ee_pos[tid] = wp.transform_point(body_q[tid * num_links + ee_link_index], ee_link_offset)
 
 
 class Sim:
@@ -522,18 +509,3 @@ if __name__ == "__main__":
         train_iters=args.train_iters,
     )
     run_sim(config)
-
-def quat_from_axis_angle_np(axis, angle):
-    """Convert axis-angle to quaternion using numpy.
-    
-    Args:
-        axis: numpy array [x, y, z] representing the rotation axis
-        angle: rotation angle in radians
-    Returns:
-        quaternion as numpy array [x, y, z, w]
-    """
-    axis = np.array(axis, dtype=np.float32)
-    axis = axis / np.linalg.norm(axis)  # normalize the axis
-    s = np.sin(angle / 2.0)
-    c = np.cos(angle / 2.0)
-    return np.array([axis[0] * s, axis[1] * s, axis[2] * s, c], dtype=np.float32)
