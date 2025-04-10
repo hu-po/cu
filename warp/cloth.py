@@ -49,11 +49,11 @@ class SimConfig:
     cloth_vel: tuple[float, float, float] = (0.0, 0.0, 0.0)  # Initial velocity of cloth
     fix_left: bool = True  # Fix the left edge of the cloth
     usd_output_path: str = "~/dev/cu/warp/cloth_output_grok.usd"  # Path to save USD file
-    bunny_usd_path: str = "bunny.usd"  # Path to bunny USD file
-    bunny_pos: tuple[float, float, float] = (1.0, 0.0, 1.0)  # Position of bunny mesh
-    bunny_rot_axis: tuple[float, float, float] = (0.0, 1.0, 0.0)  # Axis for bunny rotation
-    bunny_rot_angle: float = math.pi * 0.5  # Angle for bunny rotation (radians)
-    bunny_scale: tuple[float, float, float] = (2.0, 2.0, 2.0)  # Scale of bunny mesh
+    mesh_target_usd_path: str = "~/dev/cu/warp/assets/mesh_target.usd"  # Path to mesh_target USD file
+    mesh_target_pos: tuple[float, float, float] = (1.0, 0.0, 1.0)  # Position of mesh_target mesh
+    mesh_target_rot_axis: tuple[float, float, float] = (0.0, 1.0, 0.0)  # Axis for mesh_target rotation
+    mesh_target_rot_angle: float = math.pi * 0.5  # Angle for mesh_target rotation (radians)
+    mesh_target_scale: tuple[float, float, float] = (2.0, 2.0, 2.0)  # Scale of mesh_target mesh
     # Integrator-specific parameters
     euler_tri_ke: float = 1.0e3  # Triangle stiffness for Euler
     euler_tri_ka: float = 1.0e3  # Triangle area stiffness for Euler
@@ -155,10 +155,10 @@ class Sim:
         log.info(f"Built cloth grid: {self.config.cloth_width}x{self.config.cloth_height}")
 
     def _build_collider(self, builder: wp.sim.ModelBuilder):
-        """Builds the static bunny mesh collider."""
-        mesh_usd_path = os.path.join(warp.examples.get_asset_directory(), self.config.bunny_usd_path)
+        """Builds the static target mesh collider."""
+        mesh_usd_path = os.path.expanduser(self.config.mesh_target_usd_path)
         usd_stage = Usd.Stage.Open(mesh_usd_path)
-        usd_geom = UsdGeom.Mesh(usd_stage.GetPrimAtPath("/root/bunny"))
+        usd_geom = UsdGeom.Mesh(usd_stage.GetPrimAtPath("/root/target"))
         mesh_points = np.array(usd_geom.GetPointsAttr().Get())
         mesh_indices = np.array(usd_geom.GetFaceVertexIndicesAttr().Get())
         mesh = wp.sim.Mesh(mesh_points, mesh_indices)
@@ -166,14 +166,14 @@ class Sim:
         builder.add_shape_mesh(
             body=-1,
             mesh=mesh,
-            pos=wp.vec3(*self.config.bunny_pos),
-            rot=wp.quat_from_axis_angle(wp.vec3(*self.config.bunny_rot_axis), self.config.bunny_rot_angle),
-            scale=wp.vec3(*self.config.bunny_scale),
+            pos=wp.vec3(*self.config.mesh_target_pos),
+            rot=wp.quat_from_axis_angle(wp.vec3(*self.config.mesh_target_rot_axis), self.config.mesh_target_rot_angle),
+            scale=wp.vec3(*self.config.mesh_target_scale),
             ke=self.config.mesh_ke,
             kd=self.config.mesh_kd,
             kf=self.config.mesh_kf,
         )
-        log.info("Added bunny mesh collider")
+        log.info("Added target mesh collider")
 
     def _setup_integrator(self):
         """Sets up the appropriate integrator based on type."""
