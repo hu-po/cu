@@ -46,3 +46,6 @@ Makefile
 *.usd.gz
 *.usd.zip
 *.usd.bz2
+
+# Assets
+assets/

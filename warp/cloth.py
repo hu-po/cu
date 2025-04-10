@@ -8,11 +8,9 @@ import numpy as np
 from pxr import Usd, UsdGeom
 
 import warp as wp
-import warp.examples
 import warp.sim
 import warp.sim.render
 
-# Logging setup
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -21,7 +19,6 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 
-# Integrator types
 class IntegratorType(Enum):
     EULER = "euler"
     XPBD = "xpbd"
@@ -39,21 +36,21 @@ class SimConfig:
     fps: int = 60  # Frames per second
     sim_substeps: int = 32  # Number of simulation substeps per frame
     integrator_type: IntegratorType = IntegratorType.EULER  # Type of integrator
-    cloth_width: int = 64  # Cloth resolution in x
-    cloth_height: int = 32  # Cloth resolution in y
+    cloth_width: int = 16  # Cloth resolution in x
+    cloth_height: int = 16  # Cloth resolution in y
     cloth_cell_size: float = 0.1  # Size of each cloth cell
     cloth_mass: float = 0.1  # Mass per cloth particle
-    cloth_pos: tuple[float, float, float] = (0.0, 4.0, 0.0)  # Initial position of cloth
+    cloth_pos: tuple[float, float, float] = (0.0, 2.0, 0.0)  # Initial position of cloth
     cloth_rot_axis: tuple[float, float, float] = (1.0, 0.0, 0.0)  # Axis for cloth rotation
     cloth_rot_angle: float = math.pi * 0.5  # Angle for cloth rotation (radians)
     cloth_vel: tuple[float, float, float] = (0.0, 0.0, 0.0)  # Initial velocity of cloth
     fix_left: bool = True  # Fix the left edge of the cloth
-    usd_output_path: str = "~/dev/cu/warp/cloth_output_grok.usd"  # Path to save USD file
-    mesh_target_usd_path: str = "~/dev/cu/warp/assets/mesh_target.usd"  # Path to mesh_target USD file
+    usd_output_path: str = "~/dev/cu/warp/cloth_output.usd"  # Path to save USD file
+    mesh_target_usd_path: str = "~/dev/cu/warp/assets/arm.usda"  # Path to mesh_target USD file
     mesh_target_pos: tuple[float, float, float] = (1.0, 0.0, 1.0)  # Position of mesh_target mesh
     mesh_target_rot_axis: tuple[float, float, float] = (0.0, 1.0, 0.0)  # Axis for mesh_target rotation
     mesh_target_rot_angle: float = math.pi * 0.5  # Angle for mesh_target rotation (radians)
-    mesh_target_scale: tuple[float, float, float] = (2.0, 2.0, 2.0)  # Scale of mesh_target mesh
+    mesh_target_scale: tuple[float, float, float] = (6.0, 6.0, 6.0)  # Scale of mesh_target mesh
     # Integrator-specific parameters
     euler_tri_ke: float = 1.0e3  # Triangle stiffness for Euler
     euler_tri_ka: float = 1.0e3  # Triangle area stiffness for Euler
@@ -89,7 +86,7 @@ class Sim:
 
         # Finalize model
         self.model = builder.finalize()
-        self.model.ground = True
+        self.model.ground = False
         self.model.soft_contact_ke = config.soft_contact_ke
         self.model.soft_contact_kd = config.soft_contact_kd
 
@@ -158,7 +155,7 @@ class Sim:
         """Builds the static target mesh collider."""
         mesh_usd_path = os.path.expanduser(self.config.mesh_target_usd_path)
         usd_stage = Usd.Stage.Open(mesh_usd_path)
-        usd_geom = UsdGeom.Mesh(usd_stage.GetPrimAtPath("/root/target"))
+        usd_geom = UsdGeom.Mesh(usd_stage.GetPrimAtPath("/object/geom/mesh"))
         mesh_points = np.array(usd_geom.GetPointsAttr().Get())
         mesh_indices = np.array(usd_geom.GetFaceVertexIndicesAttr().Get())
         mesh = wp.sim.Mesh(mesh_points, mesh_indices)
