@@ -16,7 +16,7 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 log = logging.getLogger(__name__)
-log.setLevel(logging.DEBUG)
+log.setLevel(logging.INFO)
 
 
 @dataclass
@@ -24,9 +24,9 @@ class SimConfig:
     device: str = None # device to run the simulation on
     seed: int = 42 # random seed
     headless: bool = False # turns off rendering
-    num_envs: int = 1 # number of parallel environments
-    num_rollouts: int = 1 # number of rollouts to perform
-    train_iters: int = 3 # number of training iterations per rollout
+    num_envs: int = 16 # number of parallel environments
+    num_rollouts: int = 2 # number of rollouts to perform
+    train_iters: int = 64 # number of training iterations per rollout
     start_time: float = 0.0 # start time for the simulation
     fps: int = 60 # frames per second
     step_size: float = 1.0 # step size in q space for updates
@@ -347,9 +347,9 @@ class Sim:
         rot_z_axis = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), -math.pi / 2.0)
 
         # Convert base rotations to numpy [x,y,z,w] format
-        rot_x_np = rot_x_axis
-        rot_y_np = rot_y_axis
-        rot_z_np = rot_z_axis
+        rot_x_np = np.array([rot_x_axis.x, rot_x_axis.y, rot_x_axis.z, rot_x_axis.w], dtype=np.float32)
+        rot_y_np = np.array([rot_y_axis.x, rot_y_axis.y, rot_y_axis.z, rot_y_axis.w], dtype=np.float32)
+        rot_z_np = np.array([rot_z_axis.x, rot_z_axis.y, rot_z_axis.z, rot_z_axis.w], dtype=np.float32)
 
         # Get current body transforms (needed for EE pose)
         # Ensure the data is on the host for processing
@@ -481,7 +481,15 @@ def run_sim(config: SimConfig):
                                           size=(sim.num_envs,))
             target_orientations = np.empty((sim.num_envs, 4), dtype=np.float32)
             for e in range(sim.num_envs):
-                target_orientations[e] = quat_from_axis_angle_np(random_axes[e], random_angles[e])
+                # Get the arm’s base (initial) orientation as a numpy quaternion.
+                base_quat = np.array([sim.initial_arm_orientation.x,
+                                    sim.initial_arm_orientation.y,
+                                    sim.initial_arm_orientation.z,
+                                    sim.initial_arm_orientation.w], dtype=np.float32)
+                # Create the small random rotation.
+                random_rot = quat_from_axis_angle_np(random_axes[e], random_angles[e])
+                # Compose it with the base rotation:
+                target_orientations[e] = quat_mul_np(base_quat, random_rot)
             sim.target_ori = target_orientations
             log.debug(f"Updated target orientation (env 0, rollout {i}): {sim.target_ori[0]}")
             for j in range(config.train_iters):
