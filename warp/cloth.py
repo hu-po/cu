@@ -81,22 +81,23 @@ class Sim:
         self.profiler = {}
 
         # Build the simulation model
-        builder = wp.sim.ModelBuilder()
-        self._build_cloth(builder)
-        self._build_collider(builder)
+        with wp.ScopedTimer("model_init", print=False, active=True, dict=self.profiler):
+            builder = wp.sim.ModelBuilder()
+            self._build_cloth(builder)
+            self._build_collider(builder)
 
-        # Finalize model
-        self.model = builder.finalize()
-        self.model.ground = False
-        self.model.soft_contact_ke = config.soft_contact_ke
-        self.model.soft_contact_kd = config.soft_contact_kd
+            # Finalize model
+            self.model = builder.finalize()
+            self.model.ground = False
+            self.model.soft_contact_ke = config.soft_contact_ke
+            self.model.soft_contact_kd = config.soft_contact_kd
 
-        # Set up integrator
-        self._setup_integrator()
+            # Set up integrator
+            self._setup_integrator()
 
-        # Simulation states
-        self.state_0 = self.model.state()
-        self.state_1 = self.model.state()
+            # Simulation states
+            self.state_0 = self.model.state()
+            self.state_1 = self.model.state()
 
         # Renderer setup
         if not config.headless:
@@ -107,9 +108,10 @@ class Sim:
         # CUDA graph setup
         self.use_cuda_graph = wp.get_device().is_cuda
         if self.use_cuda_graph:
-            with wp.ScopedCapture() as capture:
-                self.simulate()
-            self.graph = capture.graph
+            with wp.ScopedTimer("cuda_graph_init", print=False, active=True, dict=self.profiler):
+                with wp.ScopedCapture() as capture:
+                    self.simulate()
+                self.graph = capture.graph
 
     def _build_cloth(self, builder: wp.sim.ModelBuilder):
         """Builds the cloth grid based on integrator type."""
@@ -186,11 +188,14 @@ class Sim:
 
     def simulate(self):
         """Performs one frame of simulation."""
-        wp.sim.collide(self.model, self.state_0)
-        for _ in range(self.config.sim_substeps):
-            self.state_0.clear_forces()
-            self.integrator.simulate(self.model, self.state_0, self.state_1, self.sim_dt)
-            self.state_0, self.state_1 = self.state_1, self.state_0
+        with wp.ScopedTimer("collision_detection", print=False, active=True, dict=self.profiler):
+            wp.sim.collide(self.model, self.state_0)
+        
+        with wp.ScopedTimer("integration", print=False, active=True, dict=self.profiler):
+            for _ in range(self.config.sim_substeps):
+                self.state_0.clear_forces()
+                self.integrator.simulate(self.model, self.state_0, self.state_1, self.sim_dt)
+                self.state_0, self.state_1 = self.state_1, self.state_0
 
     def step(self):
         """Advances the simulation by one frame."""
@@ -216,20 +221,45 @@ def run_sim(config: SimConfig):
     log.info("Starting cloth simulation")
     
     with wp.ScopedDevice(config.device):
-        sim = Sim(config)
-        for i in range(config.num_frames):
-            sim.step()
-            sim.render()
-            if i % (config.fps) == 0:  # Log every second
-                log.debug(f"Frame {i}/{config.num_frames}")
-        
-        if not config.headless and sim.renderer is not None:
-            sim.renderer.save()
-        
-        avg_step_time = np.array(sim.profiler["step"]).mean()
-        steps_per_second = 1000.0 / avg_step_time
-        log.info(f"Simulation complete! Performed {config.num_frames} frames")
-        log.info(f"Average step time: {avg_step_time:.2f} ms, {steps_per_second:.2f} steps/s")
+        total_profiler = {}  # Create a separate profiler for total time
+        with wp.ScopedTimer("total_time", print=False, active=True, dict=total_profiler):
+            sim = Sim(config)
+            for i in range(config.num_frames):
+                sim.step()
+                sim.render()
+                if i % (config.fps) == 0:  # Log every second
+                    log.debug(f"Frame {i}/{config.num_frames}")
+            
+            if not config.headless and sim.renderer is not None:
+                sim.renderer.save()
+            
+            # Log profiling results
+            log.info("\nPerformance Profile:")
+            
+            # Model initialization time (one-time cost)
+            if "model_init" in sim.profiler:
+                model_init_time = sim.profiler["model_init"][0]  # Only one measurement
+                log.info(f"  Model Initialization: {model_init_time:.2f} ms")
+            
+            # CUDA graph initialization time (one-time cost)
+            if "cuda_graph_init" in sim.profiler:
+                cuda_init_time = sim.profiler["cuda_graph_init"][0]  # Only one measurement
+                log.info(f"  CUDA Graph Initialization: {cuda_init_time:.2f} ms")
+            
+            # Per-frame metrics
+            for key in ["step", "collision_detection", "integration", "render"]:
+                if key in sim.profiler:
+                    times = np.array(sim.profiler[key])
+                    avg_time = times.mean()
+                    std_time = times.std()
+                    steps_per_second = 1000.0 / avg_time
+                    log.info(f"  {key.title()}: {avg_time:.2f} ± {std_time:.2f} ms ({steps_per_second:.2f} steps/s)")
+            
+            # Total time
+            total_time = np.array(total_profiler["total_time"]).mean()
+            log.info(f"\nTotal simulation time: {total_time/1000:.2f} seconds")
+            log.info(f"Performed {config.num_frames} frames")
+            log.info(f"Average FPS: {config.num_frames/(total_time/1000):.2f}")
 
 if __name__ == "__main__":
     import argparse

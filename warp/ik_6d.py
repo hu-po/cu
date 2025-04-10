@@ -257,25 +257,28 @@ class Sim:
         self.profiler = {}
 
     def compute_ee_error(self):
-        wp.sim.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, None, self.state)
-        host_quats = get_body_quaternions(self.state.body_q.numpy(), self.num_links, self.ee_link_index)
-        device_quats = wp.array(host_quats, dtype=wp.quat)
-        wp.launch(
-            compute_ee_error_kernel,
-            dim=self.num_envs,
-            inputs=[
-                self.state.body_q,
-                self.num_links,
-                self.ee_link_index,
-                self.ee_link_offset,
-                wp.array(self.targets, dtype=wp.vec3),
-                wp.array(self.target_ori, dtype=wp.quat),
-                device_quats,
-            ],
-            outputs=[self.ee_error],
-        )
-        error_np = self.ee_error.numpy()
-        log.debug(f"EE error (env 0): Pos [{error_np[0]:.4f}, {error_np[1]:.4f}, {error_np[2]:.4f}], Ori [{error_np[3]:.4f}, {error_np[4]:.4f}, {error_np[5]:.4f}]")
+        with wp.ScopedTimer("forward_kinematics", print=False, active=True, dict=self.profiler):
+            wp.sim.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, None, self.state)
+            host_quats = get_body_quaternions(self.state.body_q.numpy(), self.num_links, self.ee_link_index)
+            device_quats = wp.array(host_quats, dtype=wp.quat)
+        
+        with wp.ScopedTimer("error_compute", print=False, active=True, dict=self.profiler):
+            wp.launch(
+                compute_ee_error_kernel,
+                dim=self.num_envs,
+                inputs=[
+                    self.state.body_q,
+                    self.num_links,
+                    self.ee_link_index,
+                    self.ee_link_offset,
+                    wp.array(self.targets, dtype=wp.vec3),
+                    wp.array(self.target_ori, dtype=wp.quat),
+                    device_quats,
+                ],
+                outputs=[self.ee_error],
+            )
+            error_np = self.ee_error.numpy()
+            log.debug(f"EE error (env 0): Pos [{error_np[0]:.4f}, {error_np[1]:.4f}, {error_np[2]:.4f}], Ori [{error_np[3]:.4f}, {error_np[4]:.4f}, {error_np[5]:.4f}]")
         return self.ee_error
 
     def compute_geometric_jacobian(self):
@@ -452,11 +455,12 @@ class Sim:
     def render(self):
         if self.renderer is None:
             return
-        self.renderer.begin_frame(self.render_time)
-        self.renderer.render(self.state)
-        self.render_gizmos()
-        self.renderer.end_frame()
-        self.render_time += self.frame_dt
+        with wp.ScopedTimer("render", print=False, active=True, dict=self.profiler):
+            self.renderer.begin_frame(self.render_time)
+            self.renderer.render(self.state)
+            self.render_gizmos()
+            self.renderer.end_frame()
+            self.render_time += self.frame_dt
 
 def run_sim(config: SimConfig):
     wp.init()
@@ -469,40 +473,45 @@ def run_sim(config: SimConfig):
         log.debug("finite diff geometric jacobian:")
         log.debug(sim.compute_fd_jacobian())
         for i in range(config.num_rollouts):
-            sim.targets = sim.target_origin.copy()
-            sim.targets[:, :] += sim.rng.uniform(
-                -config.target_spawn_pos_noise / 2,
-                config.target_spawn_pos_noise / 2,
-                size=(sim.num_envs, 3)
-            )
-            random_axes = sim.rng.uniform(-1, 1, size=(sim.num_envs, 3))
-            random_angles = sim.rng.uniform(-config.target_spawn_rot_noise, 
-                                          config.target_spawn_rot_noise, 
-                                          size=(sim.num_envs,))
-            target_orientations = np.empty((sim.num_envs, 4), dtype=np.float32)
-            for e in range(sim.num_envs):
-                # Get the arm’s base (initial) orientation as a numpy quaternion.
-                base_quat = np.array([sim.initial_arm_orientation.x,
-                                    sim.initial_arm_orientation.y,
-                                    sim.initial_arm_orientation.z,
-                                    sim.initial_arm_orientation.w], dtype=np.float32)
-                # Create the small random rotation.
-                random_rot = quat_from_axis_angle_np(random_axes[e], random_angles[e])
-                # Compose it with the base rotation:
-                target_orientations[e] = quat_mul_np(base_quat, random_rot)
-            sim.target_ori = target_orientations
-            log.debug(f"Updated target orientation (env 0, rollout {i}): {sim.target_ori[0]}")
+            with wp.ScopedTimer("target_update", print=False, active=True, dict=sim.profiler):
+                sim.targets = sim.target_origin.copy()
+                sim.targets[:, :] += sim.rng.uniform(
+                    -config.target_spawn_pos_noise / 2,
+                    config.target_spawn_pos_noise / 2,
+                    size=(sim.num_envs, 3)
+                )
+                random_axes = sim.rng.uniform(-1, 1, size=(sim.num_envs, 3))
+                random_angles = sim.rng.uniform(-config.target_spawn_rot_noise, 
+                                              config.target_spawn_rot_noise, 
+                                              size=(sim.num_envs,))
+                target_orientations = np.empty((sim.num_envs, 4), dtype=np.float32)
+                for e in range(sim.num_envs):
+                    base_quat = np.array([sim.initial_arm_orientation.x,
+                                        sim.initial_arm_orientation.y,
+                                        sim.initial_arm_orientation.z,
+                                        sim.initial_arm_orientation.w], dtype=np.float32)
+                    random_rot = quat_from_axis_angle_np(random_axes[e], random_angles[e])
+                    target_orientations[e] = quat_mul_np(base_quat, random_rot)
+                sim.target_ori = target_orientations
+                log.debug(f"Updated target orientation (env 0, rollout {i}): {sim.target_ori[0]}")
+
             for j in range(config.train_iters):
                 sim.step()
                 sim.render()
                 log.debug(f"rollout {i}, iter: {j}, error: {sim.compute_ee_error().numpy().mean()}")
+
         if not config.headless and sim.renderer is not None:
             sim.renderer.save()
-        avg_time = np.array(sim.profiler["jacobian"]).mean()
-        avg_steps_second = 1000.0 * float(sim.num_envs) / avg_time
+
+        # Log profiling results
+        log.info("Performance Profile:")
+        for key, times in sim.profiler.items():
+            avg_time = np.array(times).mean()
+            avg_steps_second = 1000.0 * float(sim.num_envs) / avg_time if key != "target_update" else 1000.0 / avg_time
+            log.info(f"  {key}: {avg_time:.3f} ms ({avg_steps_second:.2f} steps/s)")
+
     log.info(f"simulation complete!")
     log.info(f"performed {config.num_rollouts * config.train_iters} steps")
-    log.info(f"step time: {avg_time:.3f} ms, {avg_steps_second:.2f} steps/s")
 
 
 if __name__ == "__main__":
