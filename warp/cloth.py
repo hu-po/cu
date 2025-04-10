@@ -236,23 +236,23 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=str, default=None, help="Override the default Warp device.")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument("--headless", action='store_true', help="Run in headless mode.")
-    # parser.add_argument("--num_frames", type=int, default=300, help="Total number of frames.")
-    # parser.add_argument("--integrator", type=IntegratorType, choices=list(IntegratorType), default=IntegratorType.EULER, help="Type of integrator.")
-    # parser.add_argument("--width", type=int, default=64, help="Cloth resolution in x.")
-    # parser.add_argument("--height", type=int, default=32, help="Cloth resolution in y.")
+    parser.add_argument("--seed", type=int, default=SimConfig.seed, help="Random seed.")
+    parser.add_argument("--num_frames", type=int, default=SimConfig.num_frames, help="Total number of frames.")
+    parser.add_argument("--integrator", type=IntegratorType, choices=list(IntegratorType), default=SimConfig.integrator_type, help="Type of integrator.")
+    parser.add_argument("--width", type=int, default=SimConfig.cloth_width, help="Cloth resolution in x.")
+    parser.add_argument("--height", type=int, default=SimConfig.cloth_height, help="Cloth resolution in y.")
     
     args = parser.parse_known_args()[0]
     
     config = SimConfig(
         device=args.device,
-        seed=args.seed,
         headless=args.headless,
-        # num_frames=args.num_frames,
-        # integrator_type=args.integrator,
-        # cloth_width=args.width,
-        # cloth_height=args.height,
+        seed=args.seed,
+        num_frames=args.num_frames,
+        integrator_type=args.integrator,
+        cloth_width=args.width,
+        cloth_height=args.height,
     )
     
     run_sim(config)

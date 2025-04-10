@@ -509,18 +509,18 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=str, default=None, help="Override default Warp device.")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument("--headless", action='store_true', help="Run in headless mode.")
-    # parser.add_argument("--num_envs", type=int, default=16, help="Number of environments to simulate.")
-    # parser.add_argument("--num_rollouts", type=int, default=2, help="Number of rollouts to perform.")
-    # parser.add_argument("--train_iters", type=int, default=64, help="Training iterations per rollout.")
+    parser.add_argument("--seed", type=int, default=SimConfig.seed, help="Random seed.")
+    parser.add_argument("--num_envs", type=int, default=SimConfig.num_envs, help="Number of environments to simulate.")
+    parser.add_argument("--num_rollouts", type=int, default=SimConfig.num_rollouts, help="Number of rollouts to perform.")
+    parser.add_argument("--train_iters", type=int, default=SimConfig.train_iters, help="Training iterations per rollout.")
     args = parser.parse_known_args()[0]
     config = SimConfig(
         device=args.device,
-        seed=args.seed,
         headless=args.headless,
-        # num_envs=args.num_envs,
-        # num_rollouts=args.num_rollouts,
-        # train_iters=args.train_iters,
+        seed=args.seed,
+        num_envs=args.num_envs,
+        num_rollouts=args.num_rollouts,
+        train_iters=args.train_iters,
     )
     run_sim(config)
