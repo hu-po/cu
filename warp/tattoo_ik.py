@@ -11,12 +11,12 @@ import warp.sim
 import warp.sim.render
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s|%(name)s|%(levelname)s|%(message)s',
     datefmt='%H:%M:%S'
 )
 log = logging.getLogger(__name__)
-log.setLevel(logging.INFO)
+log.setLevel(logging.DEBUG)
 
 # --- Configuration ---
 @dataclass
@@ -24,7 +24,7 @@ class IKConfig:
     # --- Input/Output ---
     ik_targets_path: str = "outputs/tattoo_ik_poses.npy" # Source of all targets
     urdf_path: str = "~/dev/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf" # Source URDF
-    output_dir: str = "ik_batches_output" # Directory for batch USDs
+    output_dir: str = "scenes/batches" # Directory for batch USDs
 
     # --- Simulation & Solver ---
     seed: int = 42
@@ -278,50 +278,59 @@ class ParallelTattooIKSolver:
             self.ee_error_wp = wp.zeros(self.num_envs * 6, dtype=wp.float32, device=config.device)
 
         # --- Renderer Setup ---
-        self.renderer = None
-        if not config.headless:
-            # Use the specific path passed for this batch
-            log.info(f"Initializing renderer for batch, outputting to {batch_usd_path}")
-            try:
-                self.renderer = wp.sim.render.SimRenderer(self.model, batch_usd_path, scaling=1.0)
-                self.gizmo_pos_wp = wp.zeros(self.num_envs * 6, dtype=wp.vec3, device=config.device)
-                self.gizmo_rot_wp = wp.zeros(self.num_envs * 6, dtype=wp.quat, device=config.device)
-                self.rot_x_axis_q_wp = wp.quat_from_axis_angle(wp.vec3(0., 0., 1.), math.pi / 2.)
-                self.rot_y_axis_q_wp = wp.quat_identity()
-                self.rot_z_axis_q_wp = wp.quat_from_axis_angle(wp.vec3(1., 0., 0.), -math.pi / 2.)
-            except Exception as e:
-                 log.error(f"Failed to initialize renderer for batch: {e}. Running headless.", exc_info=True)
-                 # Don't globally set config.headless=True, just skip rendering for this batch if needed
-                 self.renderer = None # Ensure renderer is None if setup fails
+        self.renderer = None # Always run headless
 
     # --- Methods: compute_ee_error, _ik_step, step, render_gizmos, render ---
     # [These methods remain largely the same as in the previous version,
     #  they will operate on self.num_envs which is now the batch size]
-    def compute_ee_error(self, joint_q_wp: wp.array) -> np.ndarray:
-        # ... (implementation from previous script) ...
-        with wp.ScopedTimer("eval_fk", print=False, active=True, dict=self.profiler):
-            # Use the provided joint angles, not necessarily self.model.joint_q
-            wp.sim.eval_fk(self.model, joint_q_wp, None, None, self.state)
+    def compute_ee_error(self, joint_q_wp: wp.array, body_q_wp: wp.array) -> np.ndarray:
+        """
+        Computes the 6D end-effector error for all envs given joint angles and corresponding body poses.
+        Input: joint_q_wp - Warp array of joint angles (num_envs * dof) - (Kept for signature consistency)
+               body_q_wp - Warp array of body transforms (num_envs * num_links) - RESULTING FROM FK(joint_q_wp)
+        Output: Numpy array of flattened errors (num_envs * 6)
+        """
+        # --- Add Debug Logging ---
+        log.debug("Inside compute_ee_error:")
+        log.debug(f"  num_envs (batch size): {self.num_envs}")
+        log.debug(f"  num_links: {self.num_links}")
+        log.debug(f"  ee_link_index: {self.ee_link_index}")
+        try:
+            log.debug(f"  body_q_wp shape: {body_q_wp.shape}, dtype: {body_q_wp.dtype}")
+            log.debug(f"  targets_pos_wp shape: {self.targets_pos_wp.shape}, dtype: {self.targets_pos_wp.dtype}")
+            log.debug(f"  targets_ori_wp shape: {self.targets_ori_wp.shape}, dtype: {self.targets_ori_wp.dtype}")
+            log.debug(f"  ee_error_wp (output) shape: {self.ee_error_wp.shape}, dtype: {self.ee_error_wp.dtype}")
+            log.debug(f"  device: {self.config.device}")
+        except Exception as e:
+            log.error(f"  Error getting array info: {e}", exc_info=True)
+        # --- End Debug Logging ---
 
         with wp.ScopedTimer("error_kernel", print=False, active=True, dict=self.profiler):
-            wp.launch(
-                compute_ee_error_kernel,
-                dim=self.num_envs,
-                inputs=[
-                    self.state.body_q, # body_q is updated by eval_fk
-                    self.num_links,
-                    self.ee_link_index,
-                    self.ee_link_offset,
-                    self.targets_pos_wp, # Use loaded targets
-                    self.targets_ori_wp, # Use loaded targets
-                ],
-                outputs=[self.ee_error_wp], # ee_error is updated in-place
-                device=self.config.device
-            )
-        return self.ee_error_wp.numpy() # Return numpy array
+            try:
+                log.debug("Launching compute_ee_error_kernel...")
+                wp.launch(
+                    compute_ee_error_kernel,
+                    dim=self.num_envs,
+                    inputs=[
+                        body_q_wp,           # Use passed body transforms directly
+                        self.num_links,
+                        self.ee_link_index,
+                        self.ee_link_offset,
+                        self.targets_pos_wp,
+                        self.targets_ori_wp,
+                    ],
+                    outputs=[self.ee_error_wp],
+                    device=self.config.device
+                )
+                log.debug("compute_ee_error_kernel launch successful.")
+            except Exception as e:
+                log.error(f"wp.launch for compute_ee_error_kernel FAILED: {e}", exc_info=True)
+                raise  # Re-raise the exception to stop the script
+
+        return self.ee_error_wp.numpy()  # Return numpy array
 
     def _ik_step(self):
-        # ... (implementation from previous script - sampling_gn logic) ...
+        """Performs one IK step using sampling-based Jacobian + Gauss-Newton."""
         # Config parameters for the solver
         sigma = self.config.ik_sigma
         num_samples = self.config.ik_num_samples
@@ -333,9 +342,14 @@ class ParallelTattooIKSolver:
         q_current_np = self.model.joint_q.numpy().copy() # shape: (num_envs * dof,)
         q_updated_np = q_current_np.copy() # Array to store updates
 
-        # Compute baseline error (using current joints on GPU)
+        # --- Calculate Baseline Error ---
+        # Ensure FK is computed based on current joint angles stored in the model
         q_current_wp = wp.array(q_current_np, dtype=wp.float32, device=self.config.device)
-        error_base_all_np = self.compute_ee_error(q_current_wp) # (num_envs * 6,)
+        with wp.ScopedTimer("eval_fk_base", print=False, active=True, dict=self.profiler):
+            wp.sim.eval_fk(self.model, q_current_wp, None, None, self.state)
+        # Pass the CURRENT state's body_q to the error function
+        error_base_all_np = self.compute_ee_error(q_current_wp, self.state.body_q)
+        # --- End Baseline Error Calculation ---
 
         # Temporary array for perturbed joint angles on GPU
         q_temp_wp = wp.empty_like(self.model.joint_q)
@@ -359,7 +373,14 @@ class ParallelTattooIKSolver:
                       q_temp_np = q_current_np.copy() # Get the full current state for the batch
                       q_temp_np[base_idx_q : base_idx_q + dof] = q_sample # Modify only env 'e'
                       q_temp_wp.assign(q_temp_np) # Assign the modified batch state to GPU
-                      error_sample_all_np[i, :] = self.compute_ee_error(q_temp_wp) # Compute error for the whole batch again
+                      
+                      # --- Explicit FK for the sample ---
+                      with wp.ScopedTimer("eval_fk_sample", print=False, active=True, dict=self.profiler):
+                           wp.sim.eval_fk(self.model, q_temp_wp, None, None, self.state)
+                      # --- End FK for sample ---
+
+                      # Compute error using the body poses resulting from the sampled q
+                      error_sample_all_np[i, :] = self.compute_ee_error(q_temp_wp, self.state.body_q)
 
                  # Extract the error difference for environment 'e'
                  for i in range(num_samples):
@@ -398,64 +419,8 @@ class ParallelTattooIKSolver:
              )
 
     def step(self):
-        # ... (implementation from previous script) ...
         with wp.ScopedTimer("ik_step", print=False, active=True, dict=self.profiler):
             self._ik_step()
-        self.render_time += self.frame_dt
-
-    def render_gizmos(self):
-        # ... (implementation from previous script) ...
-         if self.renderer is None or self.gizmo_pos_wp is None:
-             return
-         # Ensure FK is up-to-date
-         wp.sim.eval_fk(self.model, self.model.joint_q, None, None, self.state)
-
-         radius = self.config.gizmo_radius
-         half_height = self.config.gizmo_length / 2.0
-
-         with wp.ScopedTimer("gizmo_kernel", print=False, active=True, dict=self.profiler):
-             wp.launch(
-                 kernel=calculate_gizmo_transforms_kernel,
-                 dim=self.num_envs,
-                 inputs=[
-                     self.state.body_q,
-                     self.targets_pos_wp, # Use loaded targets
-                     self.targets_ori_wp, # Use loaded targets
-                     self.num_links,
-                     self.ee_link_index,
-                     self.ee_link_offset,
-                     self.num_envs,
-                     self.rot_x_axis_q_wp,
-                     self.rot_y_axis_q_wp,
-                     self.rot_z_axis_q_wp,
-                     half_height
-                 ],
-                 outputs=[self.gizmo_pos_wp, self.gizmo_rot_wp],
-                 device=self.config.device
-             )
-
-         gizmo_pos_np = self.gizmo_pos_wp.numpy()
-         gizmo_rot_np = self.gizmo_rot_wp.numpy()
-
-         for e in range(self.num_envs): # Loops up to batch size
-             base_idx = e * 6
-             # Target Gizmos
-             self.renderer.render_cone(name=f"target_x_{e}", pos=tuple(gizmo_pos_np[base_idx + 0]), rot=tuple(gizmo_rot_np[base_idx + 0]), radius=radius, half_height=half_height, color=self.config.gizmo_color_x_target)
-             self.renderer.render_cone(name=f"target_y_{e}", pos=tuple(gizmo_pos_np[base_idx + 1]), rot=tuple(gizmo_rot_np[base_idx + 1]), radius=radius, half_height=half_height, color=self.config.gizmo_color_y_target)
-             self.renderer.render_cone(name=f"target_z_{e}", pos=tuple(gizmo_pos_np[base_idx + 2]), rot=tuple(gizmo_rot_np[base_idx + 2]), radius=radius, half_height=half_height, color=self.config.gizmo_color_z_target)
-             # End-Effector Gizmos
-             self.renderer.render_cone(name=f"ee_x_{e}", pos=tuple(gizmo_pos_np[base_idx + 3]), rot=tuple(gizmo_rot_np[base_idx + 3]), radius=radius, half_height=half_height, color=self.config.gizmo_color_x_ee)
-             self.renderer.render_cone(name=f"ee_y_{e}", pos=tuple(gizmo_pos_np[base_idx + 4]), rot=tuple(gizmo_rot_np[base_idx + 4]), radius=radius, half_height=half_height, color=self.config.gizmo_color_y_ee)
-             self.renderer.render_cone(name=f"ee_z_{e}", pos=tuple(gizmo_pos_np[base_idx + 5]), rot=tuple(gizmo_rot_np[base_idx + 5]), radius=radius, half_height=half_height, color=self.config.gizmo_color_z_ee)
-
-    def render(self):
-        # ... (implementation from previous script) ...
-        if self.renderer is None: return
-        with wp.ScopedTimer("render", print=False, active=True, dict=self.profiler):
-             self.renderer.begin_frame(self.render_time)
-             self.renderer.render(self.state)
-             self.render_gizmos()
-             self.renderer.end_frame()
 
     def get_final_joint_q(self) -> np.ndarray:
         """Returns the final joint configurations for the current batch."""
@@ -474,8 +439,6 @@ if __name__ == "__main__":
     parser.add_argument("--iters", type=int, default=IKConfig.num_iters, help="Number of IK iterations per batch.")
     parser.add_argument("--batch_size", type=int, default=IKConfig.batch_size, help="Number of environments per batch.")
     parser.add_argument("--device", type=str, default=IKConfig.device, help="Compute device (e.g., 'cuda:0' or 'cpu').")
-    parser.add_argument("--headless", action="store_true", help="Run without visualization.")
-    parser.add_argument("--fps", type=int, default=IKConfig.fps, help="Rendering FPS for USD.")
 
     args = parser.parse_args()
 
@@ -486,8 +449,7 @@ if __name__ == "__main__":
         num_iters=args.iters,
         batch_size=args.batch_size,
         device=args.device,
-        headless=args.headless,
-        fps=args.fps,
+        headless=True,  # Force headless mode
     )
 
     # --- Setup ---
@@ -535,7 +497,6 @@ if __name__ == "__main__":
                 current_usd_path = os.path.join(output_dir, f"ik_batch_{batch_idx:03d}.usd")
 
                 log.info(f"--- Starting Batch {batch_idx+1}/{num_batches} ({current_batch_size} targets) ---")
-                log.info(f"Outputting USD to: {current_usd_path}")
 
                 # Instantiate solver for this batch
                 solver = ParallelTattooIKSolver(config, targets_batch_np, current_batch_size, current_usd_path)
@@ -543,26 +504,12 @@ if __name__ == "__main__":
                 # Run IK iterations for this batch
                 for i in range(config.num_iters):
                     solver.step()
-                    if not config.headless:
-                        solver.render()
-                    # Optional: Log progress within batch if needed
-                    # if i % 50 == 0: log.debug(f" Batch {batch_idx+1}, Iter {i}")
-
-                # Save USD for this batch
-                if solver.renderer:
-                    log.info(f"Saving USD for batch {batch_idx+1}...")
-                    solver.renderer.save()
 
                 # Store final joint configurations for this batch
                 all_final_q.append(solver.get_final_joint_q())
 
                 batch_end_time = time.monotonic()
                 log.info(f"--- Finished Batch {batch_idx+1}/{num_batches} (Duration: {batch_end_time - batch_start_time:.2f}s) ---")
-
-                # Optional: Clear cache or delete solver to free memory between batches if needed
-                # del solver
-                # wp.context.empty_cache() # Might help free CUDA memory
-                # solver = None
 
     except Exception as e:
         log.error(f"An error occurred during batch processing: {e}", exc_info=True)
@@ -587,12 +534,9 @@ if __name__ == "__main__":
              except Exception as e:
                   log.error(f"Failed to save consolidated final joint configurations: {e}", exc_info=True)
 
-
-        # --- Profiling Output (Optional: Could aggregate across batches) ---
-        # Note: Profiling stats from the last batch might not be representative.
+        # --- Profiling Output ---
         if solver and solver.profiler:
             log.info("\n--- Performance Profile (Last Batch) ---")
-            # [Same profiling print logic as before, using the last 'solver' instance]
             profiling_data = solver.profiler
             if "model_build" in profiling_data: log.info(f"  Model Build Time: {profiling_data['model_build'][0]:.2f} ms")
             if "ik_step" in profiling_data:
@@ -602,7 +546,5 @@ if __name__ == "__main__":
             internal_ops = ["eval_fk", "error_kernel", "sampling_loop", "jacobian_estimation", "gn_update", "clip_joints"]
             for key in internal_ops:
                 if key in profiling_data and profiling_data[key]: log.info(f"    {key}: {np.mean(profiling_data[key]):.4f} ms")
-            if "render" in profiling_data: log.info(f"  Render Time (Avg): {np.mean(profiling_data['render']):.2f} ms")
-            if "gizmo_kernel" in profiling_data: log.info(f"    Gizmo Kernel (Avg): {np.mean(profiling_data['gizmo_kernel']):.3f} ms")
 
         log.info("Script finished.")

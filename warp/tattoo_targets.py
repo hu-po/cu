@@ -89,14 +89,14 @@ class SimConfig:
     cloth_rot_angle: float = math.pi * 0.5  # Angle for cloth rotation (radians)
     cloth_vel: tuple[float, float, float] = (0.0, 0.0, 0.0)  # Initial velocity of cloth
     fix_left: bool = False  # Fix the left edge of the cloth
-    usd_output_path: str = "cloth_tattoo_output.usd"  # Path to save USD file
-    mesh_target_usd_path: str = "~/dev/cu/warp/assets/arm.usda"  # Path to mesh_target USD file
+    usd_output_path: str = "scenes/cloth_tattoo_output.usd"  # Path to save USD file
+    mesh_target_usd_path: str = "assets/arm.usda"  # Path to mesh_target USD file
     mesh_target_pos: tuple[float, float, float] = (0.0, 0.0, 0.0)  # Position of mesh_target mesh
     mesh_target_rot_axis: tuple[float, float, float] = (0.0, 1.0, 0.0)  # Axis for mesh_target rotation
     mesh_target_rot_angle: float = math.pi / 4  # Angle for mesh_target rotation (radians)
     mesh_target_scale: tuple[float, float, float] = (12.0, 12.0, 12.0)  # Scale of mesh_target mesh
     tattoo_image_path: str = "assets/zorya-224x224.png" # Path to your tattoo PNG
-    tattoo_ik_poses_path: str = "tattoo_ik_poses.npy" # Path to save IK poses
+    tattoo_ik_poses_path: str = "outputs/tattoo_ik_poses.npy" # Path to save IK poses
     tattoo_gizmo_scale: float = 0.005 # Scale for the visualization gizmos
     # Integrator-specific parameters (Defaults adjusted slightly)
     euler_tri_ke: float = 1.0e3
