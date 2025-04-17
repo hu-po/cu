@@ -153,7 +153,6 @@ def calculate_gizmo_transforms_kernel(
     out_gizmo_pos: wp.array(dtype=wp.vec3),
     out_gizmo_rot: wp.array(dtype=wp.quat)
 ):
-    # ... (implementation from previous script) ...
     tid = wp.tid()
     # Target Gizmos
     target_pos = targets_pos[tid]
@@ -172,10 +171,11 @@ def calculate_gizmo_transforms_kernel(
     out_gizmo_rot[base_idx + 1] = target_rot_y
     out_gizmo_pos[base_idx + 2] = target_pos - offset_z
     out_gizmo_rot[base_idx + 2] = target_rot_z
+    
     # End-Effector Gizmos
-    t_flat = body_q[tid * num_links + ee_link_index]
-    ee_link_pos = wp.vec3(t_flat[0], t_flat[1], t_flat[2])
-    ee_link_ori = wp.quat(t_flat[3], t_flat[4], t_flat[5], t_flat[6])
+    T = body_q[tid * num_links + ee_link_index]
+    ee_link_pos = wp.transform_get_translation(T)
+    ee_link_ori = wp.transform_get_rotation(T)
     ee_tip_pos = wp.transform_point(wp.transform(ee_link_pos, ee_link_ori), ee_link_offset)
     ee_rot_x = quat_mul(ee_link_ori, rot_x_axis_q)
     ee_rot_y = quat_mul(ee_link_ori, rot_y_axis_q)
@@ -189,6 +189,13 @@ def calculate_gizmo_transforms_kernel(
     out_gizmo_rot[base_idx + 4] = ee_rot_y
     out_gizmo_pos[base_idx + 5] = ee_tip_pos - ee_offset_z
     out_gizmo_rot[base_idx + 5] = ee_rot_z
+
+@wp.kernel
+def add_delta_q_kernel(joint_q: wp.array(dtype=wp.float32),
+                       delta_q: wp.array(dtype=wp.float32),
+                       out_joint_q: wp.array(dtype=wp.float32)):
+    tid = wp.tid()
+    out_joint_q[tid] = joint_q[tid] + delta_q[tid]
 
 # --- Solver Class (Modified for Batching) ---
 class ParallelTattooIKSolver:
@@ -305,6 +312,8 @@ class ParallelTattooIKSolver:
                 log.error(f"Stack trace for renderer initialization failure:", exc_info=True)
                 self.renderer = None # Ensure renderer is None if setup fails
 
+        self.delta_q_wp = wp.zeros(self.num_envs * self.dof, dtype=wp.float32, device=config.device)
+
     # --- Methods: compute_ee_error, _ik_step, step, render_gizmos, render ---
     # [These methods remain largely the same as in the previous version,
     #  they will operate on self.num_envs which is now the batch size]
@@ -388,56 +397,24 @@ class ParallelTattooIKSolver:
             log.debug(f"IK Parameters: sigma={sigma}, num_samples={num_samples}, damping={damping}")
             log.debug(f"System: dof={dof}, num_envs={num_envs}")
 
-        # Get current joint angles (GPU -> CPU)
-        q_current_np = self.model.joint_q.numpy().copy()
-        q_updated_np = q_current_np.copy()
-        
-        if log.isEnabledFor(logging.DEBUG):
-            log.debug(f"Initial joint state shape: {q_current_np.shape}")
-            if len(q_current_np) > 0:
-                log.debug(f"Sample initial joint values (env 0): {q_current_np[0:dof]}")
-
         # --- Calculate Baseline Error ---
         log.debug("Computing baseline error...")
-        # Ensure FK is computed based on current joint angles stored in the model
-        q_current_wp = wp.array(q_current_np, dtype=wp.float32, device=self.config.device)
         
-        # Verify q_current_wp before eval_fk
-        if log.isEnabledFor(logging.DEBUG):
-            log.debug(f"Shape of q_current_wp before eval_fk: {q_current_wp.shape}")
-            try:
-                q_check = wp.to_torch(q_current_wp[0:dof])
-                log.debug(f"Sample joint values before eval_fk (env 0): {q_check}")
-                # Check for NaN/Inf
-                if torch.any(torch.isnan(q_check)) or torch.any(torch.isinf(q_check)):
-                    log.error("Found NaN or Inf values in q_current_wp before eval_fk!")
-                    raise ValueError("Invalid joint values detected")
-            except Exception as e:
-                log.error(f"Error verifying q_current_wp before eval_fk: {e}", exc_info=True)
-                raise
-
         with wp.ScopedTimer("eval_fk_base", print=False, active=True, dict=self.profiler):
-            wp.sim.eval_fk(self.model, q_current_wp, None, None, self.state)
+            wp.sim.eval_fk(self.model, self.model.joint_q, None, None, self.state)
             wp.synchronize()  # Synchronize after FK
             log.debug("Forward kinematics computed for baseline")
             
-            # Verify body_q immediately after eval_fk
+            # Optional: keep a single debug read-back of one transform
             if log.isEnabledFor(logging.DEBUG):
                 try:
-                    log.debug(f"Attempting to clone self.state.body_q (shape: {self.state.body_q.shape})")
-                    cloned_body_q = wp.clone(self.state.body_q)
-                    log.debug(f"Successfully cloned body_q. Cloned shape: {cloned_body_q.shape}")
-                    try:
-                        first_transform = wp.to_torch(cloned_body_q[0:7])
-                        log.debug(f"Successfully copied first transform. Values: {first_transform}")
-                    except Exception as e:
-                        log.warning(f"Could not convert cloned body_q to torch (non-fatal): {e}")
+                    first_transform = wp.to_torch(self.state.body_q[0:7])
+                    log.debug(f"First transform values: {first_transform}")
                 except Exception as e:
-                    log.error(f"Error operating on self.state.body_q immediately after eval_fk: {e}", exc_info=True)
-                    raise ValueError("Invalid body_q state detected after eval_fk")
+                    log.warning(f"Could not read first transform (non-fatal): {e}")
         
         # Pass the CURRENT state's body_q to the error function
-        error_base_all_np = self.compute_ee_error(q_current_wp, self.state.body_q)
+        error_base_all_np = self.compute_ee_error(self.model.joint_q, self.state.body_q)
         log.debug(f"Baseline error shape: {error_base_all_np.shape}")
         # --- End Baseline Error Calculation ---
 
@@ -450,7 +427,7 @@ class ParallelTattooIKSolver:
             log.debug(f"\n--- Processing Environment {e+1}/{num_envs} ---")
             base_idx_q = e * dof
             base_idx_err = e * 6
-            q_e = q_current_np[base_idx_q : base_idx_q + dof].copy()
+            q_e = self.model.joint_q.numpy()[base_idx_q : base_idx_q + dof].copy()
             error_base = error_base_all_np[base_idx_err : base_idx_err + 6].copy()
             
             log.debug(f"Current joint state (env {e}): {q_e}")
@@ -470,7 +447,7 @@ class ParallelTattooIKSolver:
                 error_sample_all_np = np.zeros((num_samples, num_envs * 6), dtype=np.float32)
                 for i in range(num_samples):
                     q_sample = q_e + D[i]
-                    q_temp_np = q_current_np.copy()
+                    q_temp_np = self.model.joint_q.numpy().copy()
                     q_temp_np[base_idx_q : base_idx_q + dof] = q_sample
                     q_temp_wp.assign(q_temp_np)
                     
@@ -516,13 +493,18 @@ class ParallelTattooIKSolver:
                     log.error(f"Failed to compute GN update for env {e}: {e}")
                     continue
 
-            # Update joint configuration for this environment
-            q_updated_np[base_idx_q : base_idx_q + dof] += delta_q
-            log.debug(f"Updated joints (env {e}): {q_updated_np[base_idx_q : base_idx_q + dof]}")
+            # Copy delta_q to GPU for this environment
+            self.delta_q_wp.assign(np.zeros_like(self.delta_q_wp.numpy()))  # Clear previous deltas
+            self.delta_q_wp[base_idx_q:base_idx_q + dof].assign(delta_q)
 
-        # Assign the updated joint angles back to the GPU model
-        log.debug("Assigning updated joint angles to GPU model")
-        self.model.joint_q.assign(q_updated_np)
+        # Apply joint updates on GPU
+        wp.launch(
+            add_delta_q_kernel,
+            dim=self.num_envs * self.dof,
+            inputs=[self.model.joint_q, self.delta_q_wp],
+            outputs=[self.model.joint_q],
+            device=self.config.device
+        )
 
         # Clip joint angles
         with wp.ScopedTimer("clip_joints", print=False, active=True, dict=self.profiler):
