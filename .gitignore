@@ -4,6 +4,11 @@ bin/
 *.o
 *.obj
 
+# dirs
+outputs/
+scenes/
+assets/
+
 # Executables
 gemini
 grok

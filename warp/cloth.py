@@ -46,8 +46,8 @@ class SimConfig:
     cloth_rot_angle: float = math.pi * 0.5  # Angle for cloth rotation (radians)
     cloth_vel: tuple[float, float, float] = (0.0, 0.0, 0.0)  # Initial velocity of cloth
     fix_left: bool = False  # Fix the left edge of the cloth
-    usd_output_path: str = "~/dev/cu/warp/cloth_output.usd"  # Path to save USD file
-    mesh_target_usd_path: str = "~/dev/cu/warp/assets/arm.usda"  # Path to mesh_target USD file
+    usd_output_path: str = "outputs/cloth_output.usd"  # Path to save USD file
+    mesh_target_usd_path: str = "assets/arm.usda"  # Path to mesh_target USD file
     mesh_target_pos: tuple[float, float, float] = (0.0, 0.0, 0.0)  # Position of mesh_target mesh
     mesh_target_rot_axis: tuple[float, float, float] = (0.0, 1.0, 0.0)  # Axis for mesh_target rotation
     mesh_target_rot_angle: float = math.pi / 4  # Angle for mesh_target rotation (radians)

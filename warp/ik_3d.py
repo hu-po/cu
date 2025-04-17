@@ -30,7 +30,7 @@ class SimConfig:
     fps: int = 60 # frames per second
     step_size: float = 1.0 # step size in q space for updates
     urdf_path: str = "~/dev/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf" # path to the urdf file
-    usd_output_path: str = "~/dev/cu/warp/ik_output_3d.usd" # path to the usd file to save the model
+    usd_output_path: str = "scenes/ik_output_3d.usd" # path to the usd file to save the model
     ee_link_offset: tuple[float, float, float] = (0.0, 0.0, 0.0) # offset from the ee_gripper_link to the end effector
     gizmo_radius: float = 0.005 # radius of the gizmo (used for arrow base radius)
     gizmo_length: float = 0.05 # total length of the gizmo arrow
