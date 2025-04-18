@@ -32,7 +32,7 @@ class SimConfig:
     device: str = None  # Device to run the simulation on
     seed: int = 42  # Random seed
     headless: bool = False  # Turns off rendering
-    num_frames: int = 64  # Total number of frames to simulate
+    num_frames: int = 30  # Total number of frames to simulate
     fps: int = 60  # Frames per second
     sim_substeps: int = 32  # Number of simulation substeps per frame
     integrator_type: IntegratorType = IntegratorType.EULER  # Type of integrator

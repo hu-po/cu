@@ -24,9 +24,9 @@ class SimConfig:
     device: str = None # device to run the simulation on
     seed: int = 42 # random seed
     headless: bool = False # turns off rendering
-    num_envs: int = 16 # number of parallel environments
-    num_rollouts: int = 2 # number of rollouts to perform
-    train_iters: int = 64 # number of training iterations per rollout
+    num_envs: int = 512 # number of parallel environments
+    num_rollouts: int = 3 # number of rollouts to perform
+    train_iters: int = 128 # number of training iterations per rollout
     start_time: float = 0.0 # start time for the simulation
     fps: int = 60 # frames per second
     step_size: float = 1.0 # step size in q space for updates
